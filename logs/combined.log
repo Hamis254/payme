@@ -1,0 +1,11 @@
+{"level":"info","message":"::1 - - [16/Jan/2026:13:53:27 +0000] \"GET / HTTP/1.1\" - - \"-\" \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0\"","service":"payme"}
+{"level":"info","message":"::1 - - [16/Jan/2026:14:24:41 +0000] \"GET / HTTP/1.1\" - - \"-\" \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0\"","service":"payme"}
+{"level":"info","message":"Hello from PAYME!","service":"payme"}
+{"level":"info","message":"::1 - - [19/Jan/2026:10:35:08 +0000] \"GET / HTTP/1.1\" 200 17 \"-\" \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0\"","service":"payme"}
+{"level":"info","message":"::1 - - [19/Jan/2026:10:35:08 +0000] \"GET /favicon.ico HTTP/1.1\" 404 27 \"-\" \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0\"","service":"payme"}
+{"level":"info","message":"::1 - - [19/Jan/2026:10:35:28 +0000] \"GET /api HTTP/1.1\" 200 35 \"-\" \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0\"","service":"payme"}
+{"level":"info","message":"::1 - - [19/Jan/2026:10:39:57 +0000] \"GET /api/user HTTP/1.1\" 404 27 \"-\" \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0\"","service":"payme"}
+{"level":"info","message":"::1 - - [19/Jan/2026:10:40:11 +0000] \"GET /api/auth HTTP/1.1\" 404 27 \"-\" \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0\"","service":"payme"}
+{"level":"info","message":"::1 - - [19/Jan/2026:10:40:24 +0000] \"GET /api/auth/ HTTP/1.1\" 404 27 \"-\" \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0\"","service":"payme"}
+{"level":"info","message":"Hello from PAYME!","service":"payme"}
+{"level":"info","message":"::1 - - [19/Jan/2026:11:14:23 +0000] \"GET / HTTP/1.1\" 200 17 \"-\" \"HTTPie\"","service":"payme"}
