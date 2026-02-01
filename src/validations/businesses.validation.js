@@ -1,12 +1,9 @@
 import { z } from 'zod';
 
-const kenyaPhoneRegex = /^(\+?254|0)[17][0-9]{8}$/;
-
 export const paymentMethodEnum = z.enum([
   'till_number',
   'paybill',
-  'pochi_la_biashara',
-  'send_money',
+  'wallet',
 ]);
 
 export const createBusinessSchema = z.object({
@@ -27,7 +24,10 @@ export const updateBusinessSchema = z.object({
 
 // Extra runtime check for payment_identifier based on payment_method,
 // to be used in the controller or service.
-export const validatePaymentDetails = ({ payment_method, payment_identifier }) => {
+export const validatePaymentDetails = ({
+  payment_method,
+  payment_identifier,
+}) => {
   if (!payment_method || !payment_identifier) return;
 
   if (payment_method === 'till_number' || payment_method === 'paybill') {
@@ -36,9 +36,8 @@ export const validatePaymentDetails = ({ payment_method, payment_identifier }) =
     }
   }
 
-  if (payment_method === 'pochi_la_biashara' || payment_method === 'send_money') {
-    if (!kenyaPhoneRegex.test(payment_identifier)) {
-      throw new Error('Payment identifier must be a valid Kenyan phone number');
-    }
+  if (payment_method === 'wallet') {
+    // Wallet uses fixed paybill 650880 and account 37605544, no validation needed
+    return;
   }
 };

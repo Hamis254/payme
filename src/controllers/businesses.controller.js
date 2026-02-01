@@ -132,7 +132,11 @@ export const updateMyBusiness = async (req, res, next) => {
       return res.status(400).json({ error: e.message });
     }
 
-    const business = await updateBusinessForUser(req.user.id, businessId, updates);
+    const business = await updateBusinessForUser(
+      req.user.id,
+      businessId,
+      updates
+    );
 
     res.status(200).json({
       message: 'Business updated successfully',

@@ -18,7 +18,13 @@ export const signup = async (req, res, next) => {
 
     const { name, phone_number, email, password, role } = validationResult.data;
 
-    const user = await createUser({ name, phone_number, email, password, role });
+    const user = await createUser({
+      name,
+      phone_number,
+      email,
+      password,
+      role,
+    });
 
     const token = jwttoken.sign({
       id: user.id,
@@ -31,6 +37,8 @@ export const signup = async (req, res, next) => {
     logger.info(`User registered successfully: ${email}`);
     res.status(201).json({
       message: 'User registered',
+      setupNeeded: true,
+      setupUrl: '/setup/payment-method',
       user: {
         id: user.id,
         name: user.name,

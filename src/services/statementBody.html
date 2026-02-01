@@ -1,0 +1,78 @@
+<div style="font-family: 'Inter', sans-serif;">
+
+    <h3 style="color: #054d32; font-size: 13px; margin-bottom: 8px;">SALES REVENUE SUMMARY</h3>
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 25px; font-size: 13px;">
+        <tr style="background: #f2f2f2; font-weight: 700;">
+            <td style="padding: 10px; border: 1px solid #ddd; width: 60%;">PAYMENT METHOD (MONEY-IN)</td>
+            <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">REVENUE RECEIVED IN KSH</td>
+        </tr>
+        <tr>
+            <td style="padding: 10px; border: 1px solid #ddd;">CASH</td>
+            <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">{{cash_total}}</td>
+        </tr>
+        <tr>
+            <td style="padding: 10px; border: 1px solid #ddd;">MPESA</td>
+            <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">{{mpesa_total}}</td>
+        </tr>
+        <tr>
+            <td style="padding: 10px; border: 1px solid #ddd;">HIGHER PURCHASE</td>
+            <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">{{hp_total}}</td>
+        </tr>
+        <tr style="font-weight: 900; background: #e8f5e9;">
+            <td style="padding: 10px; border: 1px solid #ddd;">TOTALS</td>
+            <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">{{gross_revenue}}</td>
+        </tr>
+    </table>
+
+    <h3 style="color: #c62828; font-size: 13px; margin-bottom: 8px;">MONEY-OUT SUMMARY</h3>
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 13px;">
+        <tr>
+            <td style="padding: 10px; border: 1px solid #ddd; width: 60%;">EXPENSES</td>
+            <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">{{expense_total}}</td>
+        </tr>
+        <tr>
+            <td style="padding: 10px; border: 1px solid #ddd;">SPOILED STOCK</td>
+            <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">{{spoiled_total}}</td>
+        </tr>
+        <tr>
+            <td style="padding: 10px; border: 1px solid #ddd;">CREDIT (LENT OUT)</td>
+            <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">{{credit_lent}}</td>
+        </tr>
+        <tr style="font-weight: 900; background: #fff5f5; color: #c62828;">
+            <td style="padding: 10px; border: 1px solid #ddd;">TOTAL MONEY-OUT</td>
+            <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">{{total_money_out}}</td>
+        </tr>
+        <tr style="font-weight: 900; background: #e8f5e9; color: #054d32; font-size: 16px;">
+            <td style="padding: 15px; border: 2px solid #054d32;">TOTAL MONEY IN HAND</td>
+            <td style="padding: 15px; border: 2px solid #054d32; text-align: right;">Ksh {{money_in_hand}}</td>
+        </tr>
+    </table>
+
+    <h3 style="color: #333; font-size: 13px; margin-bottom: 10px; text-transform: uppercase;">Detailed Sales Statement</h3>
+    <table style="width: 100%; border-collapse: collapse; font-size: 10px;">
+        <thead>
+            <tr style="background: #054d32; color: white;">
+                <th style="padding: 8px; border: 1px solid #054d32; text-align: left;">PRODUCT</th>
+                <th style="padding: 8px; border: 1px solid #054d32;">QUANTITY</th>
+                <th style="padding: 8px; border: 1px solid #054d32;">PAYMENT</th>
+                <th style="padding: 8px; border: 1px solid #054d32;">SENDER PHONE</th>
+                <th style="padding: 8px; border: 1px solid #054d32;">TRANS ID</th>
+                <th style="padding: 8px; border: 1px solid #054d32;">TIMESTAMP</th>
+                <th style="padding: 8px; border: 1px solid #054d32; text-align: right;">AMOUNT (KSH)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{#each transactions}}
+            <tr style="border-bottom: 1px solid #ddd;">
+                <td style="padding: 8px;">{{this.product}}</td>
+                <td style="padding: 8px; text-align: center;">{{this.qty}}</td>
+                <td style="padding: 8px; text-align: center;">{{this.method}}</td>
+                <td style="padding: 8px; text-align: center;">{{this.phone}}</td>
+                <td style="padding: 8px; font-family: monospace;">{{this.tx_id}}</td>
+                <td style="padding: 8px; text-align: center;">{{this.time}}</td>
+                <td style="padding: 8px; text-align: right; font-weight: 700;">{{this.amount}}</td>
+            </tr>
+            {{/each}}
+        </tbody>
+    </table>
+</div>

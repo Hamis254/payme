@@ -1,0 +1,1 @@
+ALTER TABLE "payment_configs" ALTER COLUMN "account_reference" SET DATA TYPE varchar(50);

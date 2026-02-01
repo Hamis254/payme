@@ -2,7 +2,6 @@ import logger from '#config/logger.js';
 import { db } from '#config/database.js';
 import { users } from '#models/user.model.js';
 import { eq } from 'drizzle-orm';
-import { PgHalfVector } from 'drizzle-orm/pg-core';
 
 export const getAllUsers = async () => {
   try {
@@ -68,7 +67,10 @@ export const updateUser = async (id, updates) => {
     }
 
     // Check if phone_number is being updated and if it already exists
-    if (updates.phone_number && updates.phone_number !== existingUser.phone_number) {
+    if (
+      updates.phone_number &&
+      updates.phone_number !== existingUser.phone_number
+    ) {
       const [phoneExists] = await db
         .select()
         .from(users)
