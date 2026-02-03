@@ -1,0 +1,226 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - staging
+          - production
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: payme_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18.x
+          cache: npm
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run tests
+        run: npm test
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/payme_test
+          NODE_ENV: test
+          JWT_SECRET: test-secret-key-min-32-characters-long
+          ARCJET_KEY: test-key
+          MPESA_ENV: sandbox
+      
+      - name: Check test results
+        if: failure()
+        run: exit 1
+
+  security-check:
+    name: Security & Code Quality
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18.x
+          cache: npm
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run linter
+        run: npm run lint
+      
+      - name: Check formatting
+        run: npm run format:check
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: [test, security-check]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging'
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Deploy to Render Staging
+        run: |
+          curl -X POST https://api.render.com/deploy/srv-${{ secrets.RENDER_STAGING_SERVICE_ID }}?key=${{ secrets.RENDER_API_KEY }}
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      
+      - name: Notify Slack - Staging
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "✅ PayMe API deployed to STAGING",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "✅ *Staging Deployment Successful*\n*Commit:* ${{ github.sha }}\n*Author:* ${{ github.actor }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        continue-on-error: true
+
+  deploy-production:
+    name: Deploy to Production
+    needs: [test, security-check]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Create Deployment
+        uses: actions/github-script@v6
+        id: deployment
+        with:
+          script: |
+            const deployment = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.sha,
+              environment: 'production',
+              auto_merge: false,
+              required_contexts: [],
+              description: 'PayMe API Production Deployment'
+            });
+            return deployment.data.id;
+      
+      - name: Deploy to Render Production
+        run: |
+          curl -X POST https://api.render.com/deploy/srv-${{ secrets.RENDER_PRODUCTION_SERVICE_ID }}?key=${{ secrets.RENDER_API_KEY }}
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      
+      - name: Wait for deployment
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+            let deployed = false;
+            for (let i = 0; i < 30; i++) {
+              const response = await fetch('https://api.payme.app/health');
+              if (response.ok) {
+                deployed = true;
+                break;
+              }
+              await sleep(10000); // Wait 10 seconds
+            }
+            if (!deployed) {
+              throw new Error('Health check failed after deployment');
+            }
+      
+      - name: Create Deployment Status
+        uses: actions/github-script@v6
+        with:
+          script: |
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: ${{ steps.deployment.outputs.result }},
+              state: 'success',
+              environment_url: 'https://api.payme.app',
+              description: 'Deployment successful'
+            });
+      
+      - name: Notify Slack - Production
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "✅ PayMe API deployed to PRODUCTION",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "✅ *Production Deployment Successful*\n*Commit:* ${{ github.sha }}\n*Author:* ${{ github.actor }}\n*API:* https://api.payme.app"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        continue-on-error: true
+
+  notify-failure:
+    name: Notify on Failure
+    needs: [test, security-check]
+    runs-on: ubuntu-latest
+    if: failure()
+    
+    steps:
+      - name: Notify Slack - Failure
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "❌ PayMe API deployment failed",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "❌ *Deployment Failed*\n*Commit:* ${{ github.sha }}\n*Author:* ${{ github.actor }}\n*Action:* ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        continue-on-error: true
