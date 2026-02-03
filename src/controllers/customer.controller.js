@@ -1,4 +1,4 @@
-import { logger } from '#config/logger.js';
+import logger from '#config/logger.js';
 import {
   createCustomer,
   getCustomer,
@@ -20,7 +20,7 @@ import {
   updatePreferencesSchema,
   customerListSchema,
 } from '#validations/customer.validation.js';
-import { formatValidationError } from '#utils/validation.js';
+import { formatValidationError } from '#utils/format.js';
 
 /**
  * POST /api/customers/:businessId/

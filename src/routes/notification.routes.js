@@ -9,7 +9,7 @@ import {
   testNotification,
 } from '#controllers/notification.controller.js';
 import { updatePreferencesSchema, testNotificationSchema } from '#validations/notification.validation.js';
-import { formatValidationError } from '#utils/validation.js';
+import { formatValidationError } from '#utils/format.js';
 
 const router = express.Router();
 

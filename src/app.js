@@ -25,6 +25,7 @@ import analyticsRoutes from '#routes/analytics.routes.js';
 import customerRoutes from '#routes/customer.routes.js';
 import reconciliationRoutes from '#routes/reconciliation.routes.js';
 import auditRoutes from '#routes/audit.routes.js';
+import offlineRoutes from '#routes/offline.routes.js';
 import {
   globalErrorHandler,
   notFoundHandler,
@@ -128,6 +129,7 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/reconciliation', reconciliationRoutes);
 app.use('/api/audit', auditRoutes);
+app.use('/api/offline', offlineRoutes);
 
 // ============ ERROR HANDLING ============
 

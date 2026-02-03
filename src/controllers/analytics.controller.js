@@ -5,7 +5,7 @@ import {
   productAnalyticsQuerySchema,
   trendQuerySchema,
 } from '#validations/analytics.validation.js';
-import { formatValidationError } from '#utils/errorHandler.js';
+import { formatValidationError } from '#utils/format.js';
 import { db } from '#config/database.js';
 import { businesses } from '#models/setting.model.js';
 import { eq, and } from 'drizzle-orm';

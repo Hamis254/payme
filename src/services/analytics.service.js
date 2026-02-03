@@ -22,7 +22,7 @@ const SERVICE_NAME = 'Analytics Service';
  * Get date range for period (daily, weekly, monthly, yearly)
  * Returns: { startDate, endDate }
  */
-function getDateRange(period, referenceDate = new Date()) {
+export function getDateRange(period, referenceDate = new Date()) {
   const ref = new Date(referenceDate);
   let startDate, endDate;
 

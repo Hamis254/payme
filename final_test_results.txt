@@ -1,0 +1,999 @@
+
+> payme@1.0.0 test
+> jest
+
+PASS tests/stock.test.js
+  Stock Service
+    Product Management
+      ΓêÜ should create a product (619 ms)
+      ΓêÜ should get products for a business (9 ms)
+      ΓêÜ should get product by ID (4 ms)
+      ΓêÜ should update product (3 ms)
+      ΓêÜ should handle product not found (124 ms)
+    Stock Operations
+      ΓêÜ should add stock batch (3 ms)
+      ΓêÜ should deduct stock (2 ms)
+      ΓêÜ should check stock availability (3 ms)
+      ΓêÜ should deduct stock using FIFO (5 ms)
+      ΓêÜ should record stock adjustment (2 ms)
+    Inventory Reporting
+      ΓêÜ should get inventory for product (2 ms)
+      ΓêÜ should get full inventory for business (2 ms)
+      ΓêÜ should calculate inventory value (1 ms)
+    Error Handling
+      ΓêÜ should handle insufficient stock (1 ms)
+      ΓêÜ should validate product ownership (18 ms)
+      ΓêÜ should validate business ownership on creation (5 ms)
+    Batch Tracking
+      ΓêÜ should track stock batches (2 ms)
+      ΓêÜ should track FIFO costs (2 ms)
+
+PASS tests/wallet.test.js
+  Wallet Service
+    Token Packages
+      ΓêÜ should return available token packages (1390 ms)
+      ΓêÜ should calculate correct savings for packages (3 ms)
+      ΓêÜ should apply percentage discount correctly (7 ms)
+    Token Packages Configuration
+      ΓêÜ should have correct token package pricing (5 ms)
+      ΓêÜ should have increasing discount for larger packages (7 ms)
+
+[33mwarn[39m: Callback timestamp is in the future {"age":-18490073014023,"service":"payme","timestamp":"2026-02-03T14:48:25.979Z"}
+[32minfo[39m: User test@example.com created successfully {"service":"payme","timestamp":"2026-02-03T14:48:25.972Z"}
+[31merror[39m: Error creating the user: Error: User with this email already exists {"service":"payme","timestamp":"2026-02-03T14:48:26.003Z"}
+PASS tests/users.test.js
+  Users Service
+    Exports Validation
+      ΓêÜ should export getAllUsers function (657 ms)
+      ΓêÜ should export getUserById function (12 ms)
+      ΓêÜ should export updateUser function (5 ms)
+      ΓêÜ should export deleteUser function (10 ms)
+      ΓêÜ should have exactly 4 exports (5 ms)
+    Function Types
+      ΓêÜ getAllUsers should be async (416 ms)
+      ΓêÜ getUserById should be async (11 ms)
+      ΓêÜ updateUser should be async (9 ms)
+      ΓêÜ deleteUser should be async (8 ms)
+    getAllUsers Function
+      ΓêÜ should be callable with no parameters (2 ms)
+      ΓêÜ should return a Promise (13 ms)
+      ΓêÜ should return array of users (17 ms)
+      ΓêÜ should include user fields in result (4 ms)
+    getUserById Function
+      ΓêÜ should accept id parameter (2 ms)
+      ΓêÜ should return single user object (1 ms)
+      ΓêÜ should include user fields in result (1 ms)
+      ΓêÜ should handle numeric id (18 ms)
+      ΓêÜ should throw error when user not found (7 ms)
+    updateUser Function
+      ΓêÜ should accept id and updates parameters (25 ms)
+      ΓêÜ should allow updating name (28 ms)
+      ΓêÜ should allow updating email (10 ms)
+      ΓêÜ should allow updating phone_number (80 ms)
+      ΓêÜ should allow updating role (22 ms)
+      ΓêÜ should accept multiple update fields (31 ms)
+      ΓêÜ should return updated user object (3 ms)
+      ΓêÜ should update updated_at timestamp (42 ms)
+      ΓêÜ should throw error when user not found (7 ms)
+      ΓêÜ should validate duplicate email not allowed (4 ms)
+      ΓêÜ should validate duplicate phone not allowed (4 ms)
+      ΓêÜ should allow updating same email (2 ms)
+      ΓêÜ should allow updating same phone (1 ms)
+    deleteUser Function
+      ΓêÜ should accept id parameter (1 ms)
+      ΓêÜ should return deleted user object (1 ms)
+      ΓêÜ should throw error when user not found (1 ms)
+      ΓêÜ should check user exists before deleting (1 ms)
+    Service Structure
+      ΓêÜ should be importable from #services/users.service.js (1 ms)
+      ΓêÜ should be a valid ES module (1 ms)
+    User Fields
+      ΓêÜ should handle user id field (1 ms)
+      ΓêÜ should handle user email field (3 ms)
+      ΓêÜ should handle user name field (20 ms)
+      ΓêÜ should handle user phone_number field (7 ms)
+      ΓêÜ should handle user role field (4 ms)
+      ΓêÜ should handle user created_at field (1 ms)
+      ΓêÜ should handle user updated_at field (6 ms)
+    User Roles
+      ΓêÜ should support admin role (1 ms)
+      ΓêÜ should support user role (2 ms)
+      ΓêÜ should support guest role (7 ms)
+    Email Validation
+      ΓêÜ should detect duplicate email on update (1 ms)
+      ΓêÜ should reject duplicate email with error message
+      ΓêÜ should allow email change to new address (6 ms)
+    Phone Validation
+      ΓêÜ should detect duplicate phone_number on update (1 ms)
+      ΓêÜ should reject duplicate phone with error message (2 ms)
+      ΓêÜ should allow phone change to new number (3 ms)
+      ΓêÜ should support Kenyan phone format (25 ms)
+    Error Handling
+      ΓêÜ getAllUsers should throw on database error (1 ms)
+      ΓêÜ getUserById should throw on database error (22 ms)
+      ΓêÜ updateUser should throw on database error (1 ms)
+      ΓêÜ deleteUser should throw on database error (1 ms)
+      ΓêÜ should log all operations (2 ms)
+    Database Operations
+      ΓêÜ getAllUsers should query users table (1 ms)
+      ΓêÜ getUserById should query users table with id filter (1 ms)
+      ΓêÜ updateUser should query users table to verify existence (1 ms)
+      ΓêÜ updateUser should check for duplicate email (1 ms)
+      ΓêÜ updateUser should check for duplicate phone (1 ms)
+      ΓêÜ updateUser should update users table
+      ΓêÜ deleteUser should query users table to verify existence (1 ms)
+      ΓêÜ deleteUser should delete from users table
+    User Creation Workflow
+      ΓêÜ should capture user id on creation
+      ΓêÜ should capture user email on creation
+      ΓêÜ should capture user created_at on creation (1 ms)
+      ΓêÜ should initialize user updated_at on creation (1 ms)
+    CRUD Operations Completeness
+      ΓêÜ should support Create via initial user creation (1 ms)
+      ΓêÜ should support Read with getAllUsers (1 ms)
+      ΓêÜ should support Read with getUserById (3 ms)
+      ΓêÜ should support Update with updateUser (1 ms)
+      ΓêÜ should support Delete with deleteUser (5 ms)
+    Immutable Fields
+      ΓêÜ should preserve user id on update (1 ms)
+      ΓêÜ should preserve user created_at on update (3 ms)
+      ΓêÜ should update updated_at timestamp on update (1 ms)
+
+[31merror[39m: Token purchase STK push failed {"error":"Missing required parameters: phone, amount, accountReference","service":"payme","timestamp":"2026-02-03T14:48:26.000Z"}
+[31merror[39m: Token purchase STK push failed {"error":"Missing required parameters: phone, amount, accountReference","service":"payme","timestamp":"2026-02-03T14:48:26.041Z"}
+[31merror[39m: Token purchase STK push failed {"error":"Missing required parameters: phone, amount, accountReference","service":"payme","timestamp":"2026-02-03T14:48:26.045Z"}
+[31merror[39m: Error authenticating user: Error: User not found {"service":"payme","timestamp":"2026-02-03T14:48:26.095Z"}
+PASS tests/sales.test.js (5.061 s)
+  Sales Service
+    Exports Validation
+      ΓêÜ should export validateAndCalculateCart function (787 ms)
+      ΓêÜ should export createSale function (2 ms)
+      ΓêÜ should export updateSaleStatus function (2 ms)
+      ΓêÜ should export getSalesForBusiness function (2 ms)
+      ΓêÜ should export getSaleById function (2 ms)
+      ΓêÜ should have exactly 5 exports (2 ms)
+    Function Types
+      ΓêÜ validateAndCalculateCart should be async (325 ms)
+      ΓêÜ createSale should be async (12 ms)
+      ΓêÜ updateSaleStatus should be async (21 ms)
+      ΓêÜ getSalesForBusiness should be async (12 ms)
+      ΓêÜ getSaleById should be async (17 ms)
+    Function Parameters - validateAndCalculateCart
+      ΓêÜ should accept userId parameter (1 ms)
+      ΓêÜ should accept businessId parameter (1 ms)
+      ΓêÜ should accept items array parameter (3 ms)
+      ΓêÜ should handle empty items array (13 ms)
+      ΓêÜ should handle items with product_id and quantity (11 ms)
+    Function Parameters - createSale
+      ΓêÜ should accept userId, businessId, items, and paymentMode (1 ms)
+      ΓêÜ should accept cash payment mode (14 ms)
+      ΓêÜ should accept mpesa payment mode (30 ms)
+      ΓêÜ should support optional options parameter (14 ms)
+    Function Parameters - updateSaleStatus
+      ΓêÜ should accept saleId and status parameters (2 ms)
+      ΓêÜ should accept completed status (12 ms)
+      ΓêÜ should accept pending status (29 ms)
+      ΓêÜ should accept failed status (76 ms)
+      ΓêÜ should support optional mpesaData parameter (29 ms)
+    Function Parameters - getSalesForBusiness
+      ΓêÜ should accept userId and businessId parameters (5 ms)
+      ΓêÜ should support optional options parameter (72 ms)
+      ΓêÜ should work without options parameter (11 ms)
+    Function Parameters - getSaleById
+      ΓêÜ should accept userId and saleId parameters (3 ms)
+      ΓêÜ should handle numeric saleId (13 ms)
+    Service Structure
+      ΓêÜ should be importable from #services/sales.service.js path (15 ms)
+      ΓêÜ should be a valid ES module (3 ms)
+    Payment Mode Support
+      ΓêÜ should support cash payment mode for sales (12 ms)
+      ΓêÜ should support mpesa payment mode for sales (30 ms)
+      ΓêÜ updateSaleStatus should handle mpesa transaction data (5 ms)
+    Stock Management Integration
+      ΓêÜ validateAndCalculateCart should check stock availability (1 ms)
+      ΓêÜ createSale should deduct stock using FIFO (1 ms)
+      ΓêÜ createSale should calculate profit based on FIFO cost (1 ms)
+    Data Validation
+      ΓêÜ validateAndCalculateCart should verify business ownership (4 ms)
+      ΓêÜ validateAndCalculateCart should verify product belongs to business (1 ms)
+      ΓêÜ getSalesForBusiness should require valid userId (1 ms)
+      ΓêÜ getSaleById should require valid userId and saleId (1 ms)
+    Return Value Structure
+      ΓêÜ validateAndCalculateCart should return object with items and amounts (2 ms)
+      ΓêÜ createSale should return object with sale, items, and summary (1 ms)
+      ΓêÜ updateSaleStatus should return updated sale object (2 ms)
+      ΓêÜ getSalesForBusiness should return array of sales (3 ms)
+      ΓêÜ getSaleById should return single sale object (1 ms)
+    Customer Information
+      ΓêÜ createSale should support walk_in customer type (3 ms)
+      ΓêÜ createSale should support registered customer type (1 ms)
+      ΓêÜ createSale should capture M-Pesa sender phone (1 ms)
+      ΓêÜ updateSaleStatus should update M-Pesa sender details (2 ms)
+    Sale Status Workflow
+      ΓêÜ should support cash sales with immediate completion (1 ms)
+      ΓêÜ should support mpesa sales with pending status (2 ms)
+      ΓêÜ should allow status update to completed (1 ms)
+      ΓêÜ should allow status update to failed (1 ms)
+    Profit Calculation
+      ΓêÜ createSale should calculate individual item profit (1 ms)
+      ΓêÜ createSale should calculate total profit (3 ms)
+      ΓêÜ createSale should calculate profit margin percent (1 ms)
+    Sale Items Tracking
+      ΓêÜ createSale should track product name for each item (16 ms)
+      ΓêÜ createSale should track quantity for each item (2 ms)
+      ΓêÜ createSale should track unit and total price for each item (1 ms)
+      ΓêÜ createSale should track unit cost for each item (from FIFO)
+    Error Handling
+      ΓêÜ validateAndCalculateCart should throw on invalid business (1 ms)
+      ΓêÜ validateAndCalculateCart should throw on missing product (4 ms)
+      ΓêÜ validateAndCalculateCart should throw on insufficient stock (9 ms)
+      ΓêÜ should handle sale creation errors gracefully (3 ms)
+    Database Integration
+      ΓêÜ validateAndCalculateCart should query businesses table (1 ms)
+      ΓêÜ validateAndCalculateCart should query products table
+      ΓêÜ createSale should insert into sales table (1 ms)
+      ΓêÜ createSale should insert into saleItems table (4 ms)
+      ΓêÜ createSale should insert into stockMovements table for each FIFO batch (1 ms)
+
+PASS tests/auth.test.js (5.123 s)
+  Authentication Service
+    Password Management
+      ΓêÜ should hash password (1546 ms)
+      ΓêÜ should compare password with hash (45 ms)
+      ΓêÜ should reject incorrect password (2 ms)
+    User Creation
+      ΓêÜ should create a new user (36 ms)
+      ΓêÜ should reject duplicate email (94 ms)
+    User Authentication
+      ΓêÜ should reject non-existent user (37 ms)
+
+C:\Users\kkc12\payme\node_modules\drizzle-orm\pg-core\session.cjs:66
+        throw new import_errors.DrizzleQueryError(queryString, params, e);
+              ^
+
+DrizzleQueryError: Failed query: select "id", "user_id", "name", "location", "location_description", "payment_method", "payment_identifier", "verified", "google_sheets_spreadsheet_id", "google_sheets_enabled", "google_sheets_auth_token", "created_at", "updated_at" from "businesses" where ("businesses"."id" = $1 and "businesses"."user_id" = $2) limit $3
+params: 1,1,1
+    at NeonHttpPreparedQuery.queryWithCache (C:\Users\kkc12\payme\node_modules\src\pg-core\session.ts:73:11)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at NeonHttpPreparedQuery.execute (C:\Users\kkc12\payme\node_modules\src\neon-http\session.ts:83:18)
+    at validateAndCalculateCart (C:\Users\kkc12\payme\src\services\sales.service.js:19:24) {
+  query: 'select "id", "user_id", "name", "location", "location_description", "payment_method", "payment_identifier", "verified", "google_sheets_spreadsheet_id", "google_sheets_enabled", "google_sheets_auth_token", "created_at", "updated_at" from "businesses" where ("businesses"."id" = $1 and "businesses"."user_id" = $2) limit $3',
+  params: [ 1, 1, 1 ],
+  cause: NeonDbError: Error connecting to database: TypeError: fetch failed
+      at mr.execute (C:\Users\kkc12\payme\node_modules\@neondatabase\serverless\index.js:1294:95)
+      at processTicksAndRejections (node:internal/process/task_queues:105:5)
+      at C:\Users\kkc12\payme\node_modules\src\neon-http\session.ts:84:11
+      at NeonHttpPreparedQuery.queryWithCache (C:\Users\kkc12\payme\node_modules\src\pg-core\session.ts:71:12)
+      at NeonHttpPreparedQuery.execute (C:\Users\kkc12\payme\node_modules\src\neon-http\session.ts:83:18)
+      at validateAndCalculateCart (C:\Users\kkc12\payme\src\services\sales.service.js:19:24) {
+    severity: undefined,
+    code: undefined,
+    detail: undefined,
+    hint: undefined,
+    position: undefined,
+    internalPosition: undefined,
+    internalQuery: undefined,
+    where: undefined,
+    schema: undefined,
+    table: undefined,
+    column: undefined,
+    dataType: undefined,
+    constraint: undefined,
+    file: undefined,
+    line: undefined,
+    routine: undefined,
+    sourceError: TypeError: fetch failed
+        at node:internal/deps/undici/undici:13510:13
+        at processTicksAndRejections (node:internal/process/task_queues:105:5)
+        at mr.execute (C:\Users\kkc12\payme\node_modules\@neondatabase\serverless\index.js:1294:4)
+        at C:\Users\kkc12\payme\node_modules\src\neon-http\session.ts:84:11
+        at NeonHttpPreparedQuery.queryWithCache (C:\Users\kkc12\payme\node_modules\src\pg-core\session.ts:71:12)
+        at NeonHttpPreparedQuery.execute (C:\Users\kkc12\payme\node_modules\src\neon-http\session.ts:83:18)
+        at validateAndCalculateCart (C:\Users\kkc12\payme\src\services\sales.service.js:19:24) {
+      [cause]: AggregateError: 
+          at internalConnectMultiple (node:net:1134:18)
+          at afterConnectMultiple (node:net:1715:7) {
+        code: 'ECONNREFUSED',
+        [errors]: [
+          Error: connect ECONNREFUSED ::1:443
+              at createConnectionError (node:net:1678:14)
+              at afterConnectMultiple (node:net:1708:16) {
+            errno: -4078,
+            code: 'ECONNREFUSED',
+            syscall: 'connect',
+            address: '::1',
+            port: 443
+          },
+          Error: connect ECONNREFUSED 127.0.0.1:443
+              at createConnectionError (node:net:1678:14)
+              at afterConnectMultiple (node:net:1708:16) {
+            errno: -4078,
+            code: 'ECONNREFUSED',
+            syscall: 'connect',
+            address: '127.0.0.1',
+            port: 443
+          }
+        ]
+      }
+    }
+  }
+}
+
+Node.js v22.17.0
+PASS tests/higherPurchase.test.js
+  Higher Purchase Service
+    Module Exports
+      ΓêÜ should export createAgreement function (675 ms)
+      ΓêÜ should export getAgreementById function (2 ms)
+      ΓêÜ should export listAgreements function (1 ms)
+      ΓêÜ should export recordInstallmentPayment function (1 ms)
+      ΓêÜ should export getOverdueInstallments function (1 ms)
+      ΓêÜ should export getUpcomingInstallments function (1 ms)
+      ΓêÜ should export getAgreementSummary function (1 ms)
+      ΓêÜ should export getStatusDistribution function (1 ms)
+      ΓêÜ should export updateAgreementStatus function (2 ms)
+      ΓêÜ should export getPaymentHistory function (1 ms)
+      ΓêÜ should export getCollectionRate function (1 ms)
+      ΓêÜ should export getRevenueByFrequency function (5 ms)
+    Function Signatures
+      ΓêÜ createAgreement should be async (1 ms)
+      ΓêÜ getAgreementById should be async (2 ms)
+      ΓêÜ listAgreements should be async (1 ms)
+      ΓêÜ recordInstallmentPayment should be async (2 ms)
+      ΓêÜ getOverdueInstallments should be async
+      ΓêÜ getUpcomingInstallments should be async (1 ms)
+      ΓêÜ getAgreementSummary should be async (3 ms)
+      ΓêÜ getStatusDistribution should be async (24 ms)
+      ΓêÜ updateAgreementStatus should be async (1 ms)
+      ΓêÜ getPaymentHistory should be async (2 ms)
+      ΓêÜ getCollectionRate should be async (1 ms)
+      ΓêÜ getRevenueByFrequency should be async (32 ms)
+    createAgreement Parameters
+      ΓêÜ should accept data object with saleId (2 ms)
+      ΓêÜ should accept data object with accountId (2 ms)
+      ΓêÜ should accept data object with businessId (1 ms)
+      ΓêÜ should accept data object with principalAmount (1 ms)
+      ΓêÜ should accept data object with interestRate (2 ms)
+      ΓêÜ should accept data object with downPayment (2 ms)
+      ΓêÜ should accept data object with installmentAmount (1 ms)
+      ΓêÜ should accept data object with installmentFrequency (1 ms)
+      ΓêÜ should accept data object with numberOfInstallments (1 ms)
+      ΓêÜ should accept data object with agreementDate (1 ms)
+      ΓêÜ should accept data object with firstPaymentDate (1 ms)
+      ΓêÜ should accept data object with finalPaymentDate (1 ms)
+      ΓêÜ should accept optional lateFeeAmount
+      ΓêÜ should accept optional gracePeriodDays (1 ms)
+      ΓêÜ should accept optional termsAndConditions (1 ms)
+      ΓêÜ should accept optional notes (2 ms)
+      ΓêÜ should accept optional createdBy (1 ms)
+    Calculation
+      ΓêÜ should calculate totalAmount from principal and interest (2 ms)
+      ΓêÜ should calculate amountFinanced as totalAmount minus downPayment (2 ms)
+      ΓêÜ should use atomic transaction for agreement and installments (1 ms)
+      ΓêÜ should create installments for each period (5 ms)
+      ΓêÜ should initialize status as active (1 ms)
+      ΓêÜ should initialize installments_paid as 0 (6 ms)
+      ΓêÜ should initialize balance_remaining as amountFinanced (1 ms)
+    Agreement Status
+      ΓêÜ should support active status (1 ms)
+      ΓêÜ should support completed status (1 ms)
+      ΓêÜ should support defaulted status (6 ms)
+      ΓêÜ should support cancelled status (1 ms)
+      ΓêÜ should support suspended status (1 ms)
+    Payment Processing
+      ΓêÜ recordInstallmentPayment should accept payment data (1 ms)
+      ΓêÜ should update installment status to paid (3 ms)
+      ΓêÜ should track payment date (1 ms)
+      ΓêÜ should increment installments_paid count (2 ms)
+      ΓêÜ should update balance_remaining (1 ms)
+    Installment Tracking
+      ΓêÜ getOverdueInstallments should return overdue payments (2 ms)
+      ΓêÜ getUpcomingInstallments should return upcoming payments (5 ms)
+      ΓêÜ getUpcomingInstallments should default to 30 days ahead (2 ms)
+      ΓêÜ getPaymentHistory should return installment payments (2 ms)
+    Analytics Functions
+      ΓêÜ getAgreementById should retrieve single agreement (2 ms)
+      ΓêÜ listAgreements should list agreements for business (2 ms)
+      ΓêÜ getAgreementSummary should return agreement statistics (2 ms)
+      ΓêÜ getStatusDistribution should return count by status (2 ms)
+      ΓêÜ getCollectionRate should calculate payment collection percentage (1 ms)
+      ΓêÜ getRevenueByFrequency should return revenue by payment frequency (1 ms)
+    Frequency Support
+      ΓêÜ should support daily frequency
+      ΓêÜ should support weekly frequency
+      ΓêÜ should support monthly frequency
+      ΓêÜ should support quarterly frequency (3 ms)
+    Risk Management
+      ΓêÜ should identify overdue payments (1 ms)
+      ΓêÜ should flag defaulted agreements (1 ms)
+      ΓêÜ should track collection rate (9 ms)
+      ΓêÜ should support grace period (1 ms)
+      ΓêÜ should support late fees (3 ms)
+    List Operations
+      ΓêÜ listAgreements should support business filtering (1 ms)
+      ΓêÜ listAgreements should support pagination (3 ms)
+      ΓêÜ listAgreements should support sorting (3 ms)
+      ΓêÜ listAgreements should support status filtering (2 ms)
+
+PASS tests/analytics.test.js
+  Analytics Service
+    Date Range Calculations
+      ΓêÜ should calculate daily date range (291 ms)
+      ΓêÜ should calculate weekly date range (2 ms)
+      ΓêÜ should calculate monthly date range (10 ms)
+      ΓêÜ should throw error for invalid period (108 ms)
+    Total Sales Calculation
+      ΓêÜ should calculate total sales for a period (3 ms)
+      ΓêÜ should return zeros for no sales (3 ms)
+    Profit Calculation
+      ΓêÜ should calculate total profit (2 ms)
+      ΓêÜ should calculate profit margin correctly (2 ms)
+      ΓêÜ should return 0 margin when no revenue (5 ms)
+
+PASS tests/myWallet.test.js (5.866 s)
+  My Wallet Service
+    getOrCreateWallet
+      ΓêÜ should get existing wallet for business (2266 ms)
+      ΓêÜ should throw error when business not found (157 ms)
+      ΓêÜ should create wallet when not exists (17 ms)
+    getWalletBalance
+      ΓêÜ should return wallet balance with recent transactions (7 ms)
+    getWalletTransactions
+      ΓêÜ should return wallet transactions (12 ms)
+      ΓêÜ should filter transactions by type (12 ms)
+    getTokenPurchaseHistory
+      ΓêÜ should return purchase history (8 ms)
+      ΓêÜ should filter by status (3 ms)
+
+PASS tests/spoiledStock.test.js
+  Spoiled Stock Service
+    Module Exports
+      ΓêÜ should export recordSpoilage function (414 ms)
+      ΓêÜ should export getSpoilageById function (3 ms)
+      ΓêÜ should export listSpoilageRecords function (1 ms)
+      ΓêÜ should export getSpoilageSummary function (2 ms)
+      ΓêÜ should export getSpoilageByType function (2 ms)
+      ΓêÜ should export getTopSpoiledProducts function (1 ms)
+      ΓêÜ should export getHighestLossProducts function (2 ms)
+      ΓêÜ should export getMonthlySpoilageTrend function (4 ms)
+      ΓêÜ should export getHighestSpoilageRateProducts function (1 ms)
+      ΓêÜ should export updateSpoilageRecord function (1 ms)
+      ΓêÜ should export deleteSpoilageRecord function (4 ms)
+    Function Signatures
+      ΓêÜ recordSpoilage should be async (1 ms)
+      ΓêÜ getSpoilageById should be async (1 ms)
+      ΓêÜ listSpoilageRecords should be async (1 ms)
+      ΓêÜ getSpoilageSummary should be async (1 ms)
+      ΓêÜ getSpoilageByType should be async (1 ms)
+      ΓêÜ getTopSpoiledProducts should be async
+      ΓêÜ getHighestLossProducts should be async (12 ms)
+      ΓêÜ getMonthlySpoilageTrend should be async (3 ms)
+      ΓêÜ getHighestSpoilageRateProducts should be async (1 ms)
+      ΓêÜ updateSpoilageRecord should be async (1 ms)
+      ΓêÜ deleteSpoilageRecord should be async (7 ms)
+    recordSpoilage Parameters
+      ΓêÜ should accept businessId (1 ms)
+      ΓêÜ should accept productId (1 ms)
+      ΓêÜ should accept quantity (1 ms)
+      ΓêÜ should accept spoilageType (1 ms)
+      ΓêÜ should accept reason
+      ΓêÜ should accept optional notes (1 ms)
+      ΓêÜ should accept optional createdBy (1 ms)
+      ΓêÜ should accept optional referenceType (2 ms)
+      ΓêÜ should accept optional referenceId (1 ms)
+    Spoilage Types
+      ΓêÜ should validate spoilageType against SPOILAGE_TYPES (2 ms)
+      ΓêÜ should support expiration type (10 ms)
+      ΓêÜ should support damage type (1 ms)
+      ΓêÜ should support storage type (2 ms)
+      ΓêÜ should support handling type (1 ms)
+      ΓêÜ should support theft type (2 ms)
+      ΓêÜ should support other type (1 ms)
+      ΓêÜ should throw error for invalid spoilageType (1 ms)
+    Validation
+      ΓêÜ should verify product exists (4 ms)
+      ΓêÜ should verify user owns business (1 ms)
+      ΓêÜ should verify spoiled quantity does not exceed available (1 ms)
+      ΓêÜ should throw error if insufficient stock (2 ms)
+    Loss Calculation
+      ΓêÜ should calculate unitCost from product.buying_price_per_unit (2 ms)
+      ΓêÜ should calculate totalLossValue (1 ms)
+      ΓêÜ should use atomic transaction for spoilage and stock update (2 ms)
+      ΓêÜ should update product current_quantity (1 ms)
+    Analytics Functions
+      ΓêÜ getSpoilageById should retrieve spoilage record by id
+      ΓêÜ listSpoilageRecords should list all spoilage for business
+      ΓêÜ getSpoilageSummary should return totals and breakdown (1 ms)
+      ΓêÜ getSpoilageByType should filter by spoilage type (2 ms)
+      ΓêÜ getTopSpoiledProducts should rank products by spoilage quantity (52 ms)
+      ΓêÜ getHighestLossProducts should rank products by loss value (3 ms)
+      ΓêÜ getMonthlySpoilageTrend should return trend over months (1 ms)
+      ΓêÜ getHighestSpoilageRateProducts should rank by spoilage rate (1 ms)
+    Update and Delete
+      ΓêÜ updateSpoilageRecord should modify spoilage record (2 ms)
+      ΓêÜ deleteSpoilageRecord should remove spoilage record (2 ms)
+      ΓêÜ deleteS poilageRecord should reverse stock update (6 ms)
+    Reference Types
+      ΓêÜ should support stock_count reference type (2 ms)
+      ΓêÜ should support delivery_check reference type (2 ms)
+      ΓêÜ should support manual reference type (2 ms)
+    Summary Statistics
+      ΓêÜ getSpoilageSummary should include total quantity spoiled (3 ms)
+      ΓêÜ getSpoilageSummary should include total loss value (2 ms)
+      ΓêÜ getSpoilageSummary should include breakdown by type (2 ms)
+      ΓêÜ getSpoilageSummary should include percentage by type (1 ms)
+      ΓêÜ getSpoilageSummary should track number of incidents (2 ms)
+    Trend Analysis
+      ΓêÜ getMonthlySpoilageTrend should return month and quantities (12 ms)
+      ΓêÜ getMonthlySpoilageTrend should include loss values (1 ms)
+      ΓêÜ getHighestSpoilageRateProducts should calculate rate percentage (1 ms)
+
+C:\Users\kkc12\payme\node_modules\drizzle-orm\pg-core\session.cjs:66
+        throw new import_errors.DrizzleQueryError(queryString, params, e);
+              ^
+
+DrizzleQueryError: Failed query: select "id", "email", "name", "phone_number", "role", "created_at", "updated_at" from "users"
+params: 
+    at NeonHttpPreparedQuery.queryWithCache (C:\Users\kkc12\payme\node_modules\src\pg-core\session.ts:73:11)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at NeonHttpPreparedQuery.execute (C:\Users\kkc12\payme\node_modules\src\neon-http\session.ts:83:18)
+    at getAllUsers (C:\Users\kkc12\payme\src\services\users.service.js:14:12) {
+  query: 'select "id", "email", "name", "phone_number", "role", "created_at", "updated_at" from "users"',
+  params: [],
+  cause: NeonDbError: Error connecting to database: TypeError: fetch failed
+      at mr.execute (C:\Users\kkc12\payme\node_modules\@neondatabase\serverless\index.js:1294:95)
+      at processTicksAndRejections (node:internal/process/task_queues:105:5)
+      at C:\Users\kkc12\payme\node_modules\src\neon-http\session.ts:84:11
+      at NeonHttpPreparedQuery.queryWithCache (C:\Users\kkc12\payme\node_modules\src\pg-core\session.ts:71:12)
+      at NeonHttpPreparedQuery.execute (C:\Users\kkc12\payme\node_modules\src\neon-http\session.ts:83:18)
+      at getAllUsers (C:\Users\kkc12\payme\src\services\users.service.js:14:12) {
+    severity: undefined,
+    code: undefined,
+    detail: undefined,
+    hint: undefined,
+    position: undefined,
+    internalPosition: undefined,
+    internalQuery: undefined,
+    where: undefined,
+    schema: undefined,
+    table: undefined,
+    column: undefined,
+    dataType: undefined,
+    constraint: undefined,
+    file: undefined,
+    line: undefined,
+    routine: undefined,
+    sourceError: TypeError: fetch failed
+        at node:internal/deps/undici/undici:13510:13
+        at processTicksAndRejections (node:internal/process/task_queues:105:5)
+        at mr.execute (C:\Users\kkc12\payme\node_modules\@neondatabase\serverless\index.js:1294:4)
+        at C:\Users\kkc12\payme\node_modules\src\neon-http\session.ts:84:11
+        at NeonHttpPreparedQuery.queryWithCache (C:\Users\kkc12\payme\node_modules\src\pg-core\session.ts:71:12)
+        at NeonHttpPreparedQuery.execute (C:\Users\kkc12\payme\node_modules\src\neon-http\session.ts:83:18)
+        at getAllUsers (C:\Users\kkc12\payme\src\services\users.service.js:14:12) {
+      [cause]: AggregateError: 
+          at internalConnectMultiple (node:net:1134:18)
+          at afterConnectMultiple (node:net:1715:7) {
+        code: 'ECONNREFUSED',
+        [errors]: [
+          Error: connect ECONNREFUSED ::1:443
+              at createConnectionError (node:net:1678:14)
+              at afterConnectMultiple (node:net:1708:16) {
+            errno: -4078,
+            code: 'ECONNREFUSED',
+            syscall: 'connect',
+            address: '::1',
+            port: 443
+          },
+          Error: connect ECONNREFUSED 127.0.0.1:443
+              at createConnectionError (node:net:1678:14)
+              at afterConnectMultiple (node:net:1708:16) {
+            errno: -4078,
+            code: 'ECONNREFUSED',
+            syscall: 'connect',
+            address: '127.0.0.1',
+            port: 443
+          }
+        ]
+      }
+    }
+  }
+}
+
+Node.js v22.17.0
+PASS tests/expense.test.js
+  Expense Service
+    Expense Recording
+      ΓêÜ should record new expense (278 ms)
+      ΓêÜ should validate required fields (286 ms)
+      ΓêÜ should validate expense amount is positive (9 ms)
+    Expense Categorization
+      ΓêÜ should support multiple expense categories (5 ms)
+    Expense Retrieval
+      ΓêÜ should get expense by ID (3 ms)
+      ΓêÜ should list expenses with filters (3 ms)
+      ΓêÜ should filter expenses by category (4 ms)
+      ΓêÜ should filter expenses by date range (2 ms)
+    Expense Reporting
+      ΓêÜ should get expense summary (3 ms)
+      ΓêÜ should get expenses by category (7 ms)
+      ΓêÜ should get expenses by payment method (2 ms)
+      ΓêÜ should get monthly expense trend (2 ms)
+      ΓêÜ should get top expenses (90 ms)
+      ΓêÜ should get category breakdown (2 ms)
+      ΓêÜ should get total expenses (4 ms)
+      ΓêÜ should get expense status distribution (2 ms)
+    Expense Update
+      ΓêÜ should update expense details (1 ms)
+    Expense Deletion
+      ΓêÜ should delete expense (1 ms)
+      ΓêÜ should handle deletion errors gracefully (1 ms)
+
+PASS tests/paymentConfig.test.js (6.514 s)
+  Payment Configuration Service
+    Payment Config Creation
+      ΓêÜ should create paybill payment configuration (1173 ms)
+      ΓêÜ should create till payment configuration (15 ms)
+      ΓêÜ should create pochi la biashara configuration (5 ms)
+      ΓêÜ should validate shortcode format (193 ms)
+      ΓêÜ should validate passkey is provided (3 ms)
+    Payment Config Retrieval
+      ΓêÜ should get payment config by business (3 ms)
+      ΓêÜ should get payment config by ID (2 ms)
+    Payment Config Activation
+      ΓêÜ should activate payment config (2 ms)
+      ΓêÜ should deactivate payment config (2 ms)
+    Payment Config Update
+      ΓêÜ should update payment config credentials (2 ms)
+      ΓêÜ should validate updated credentials (2 ms)
+    Payment Config Verification
+      ΓêÜ should verify M-Pesa credentials (1735 ms)
+    Payment Config Deletion
+      ΓêÜ should delete payment config (2 ms)
+      ΓêÜ should not delete active payment config (1 ms)
+    Payment Methods Support
+      ΓêÜ should support multiple payment methods (2 ms)
+
+[31merror[39m: Token purchase STK push failed {"error":"Request failed with status code 400","service":"payme","timestamp":"2026-02-03T14:48:27.557Z"}
+[31merror[39m: Token purchase STK push failed {"error":"Missing M-Pesa OAuth credentials (CONSUMER_KEY/CONSUMER_SECRET)","service":"payme","timestamp":"2026-02-03T14:48:27.561Z"}
+PASS tests/audit.test.js
+  Audit Service
+    Module Exports
+      ΓêÜ should export logAuditEvent function (424 ms)
+      ΓêÜ should export getAuditLogs function (1 ms)
+      ΓêÜ should export getEntityAuditLogs function (5 ms)
+      ΓêÜ should export getUserAuditLogs function (8 ms)
+      ΓêÜ should export getAuditSummary function (2 ms)
+      ΓêÜ should export withAuditLogging function (89 ms)
+    Function Signatures
+      ΓêÜ logAuditEvent should be async
+      ΓêÜ getAuditLogs should be async (1 ms)
+      ΓêÜ getEntityAuditLogs should be async (1 ms)
+      ΓêÜ getUserAuditLogs should be async (1 ms)
+      ΓêÜ getAuditSummary should be async
+      ΓêÜ withAuditLogging should return function (1 ms)
+    logAuditEvent Parameters
+      ΓêÜ should accept data object with businessId (1 ms)
+      ΓêÜ should accept data object with userId (1 ms)
+      ΓêÜ should accept data object with action
+      ΓêÜ should accept data object with entityType (1 ms)
+      ΓêÜ should accept data object with entityId (1 ms)
+      ΓêÜ should support optional oldValues
+      ΓêÜ should support optional newValues
+      ΓêÜ should support optional metadata (1 ms)
+      ΓêÜ should support optional ipAddress
+      ΓêÜ should support optional userAgent (1 ms)
+    getAuditLogs Parameters
+      ΓêÜ should accept businessId as required parameter (2 ms)
+      ΓêÜ should accept options object as second parameter (2 ms)
+      ΓêÜ should support limit in options (default 100) (45 ms)
+      ΓêÜ should support offset in options (default 0) (1 ms)
+      ΓêÜ should support entityType filter in options (1 ms)
+      ΓêÜ should support action filter in options (1 ms)
+      ΓêÜ should support userId filter in options
+      ΓêÜ should support startDate filter in options (1 ms)
+      ΓêÜ should support endDate filter in options
+    getEntityAuditLogs Parameters
+      ΓêÜ should accept businessId parameter (1 ms)
+      ΓêÜ should accept entityType parameter (1 ms)
+      ΓêÜ should accept entityId parameter (1 ms)
+    getUserAuditLogs Parameters
+      ΓêÜ should accept businessId parameter (1 ms)
+      ΓêÜ should accept userId parameter (1 ms)
+      ΓêÜ should accept optional limit parameter (default 50) (1 ms)
+    getAuditSummary Parameters
+      ΓêÜ should accept businessId as required parameter (1 ms)
+      ΓêÜ should accept optional days parameter (default 7) (1 ms)
+    withAuditLogging Parameters
+      ΓêÜ should accept handler function (1 ms)
+      ΓêÜ should accept options with action property (1 ms)
+      ΓêÜ should accept options with entityType property (1 ms)
+      ΓêÜ should accept options with optional metadata (1 ms)
+      ΓêÜ should accept options with optional oldValues (1 ms)
+    Audit Actions
+      ΓêÜ should support CREATE action (4 ms)
+      ΓêÜ should support UPDATE action (102 ms)
+      ΓêÜ should support DELETE action (1 ms)
+      ΓêÜ should support READ action (1 ms)
+      ΓêÜ should support EXPORT action
+      ΓêÜ should support FAILED action suffix (72 ms)
+    Summary Return Values
+      ΓêÜ getAuditSummary should return period field (20 ms)
+      ΓêÜ getAuditSummary should return totalEvents field (1 ms)
+      ΓêÜ getAuditSummary should return byAction field (1 ms)
+      ΓêÜ getAuditSummary should return byEntityType field (1 ms)
+      ΓêÜ getAuditSummary should return topUsers field (3 ms)
+      ΓêÜ topUsers should contain userId and events (1 ms)
+      ΓêÜ topUsers should be limited to 5 entries (22 ms)
+
+[31merror[39m: Business payment STK push failed {"error":"Business payment configuration is required. Please setup your M-Pesa credentials first.","service":"payme","timestamp":"2026-02-03T14:48:27.567Z"}
+[31merror[39m: Business payment STK push failed {"error":"Payment configuration is inactive. Please activate in settings.","service":"payme","timestamp":"2026-02-03T14:48:27.573Z"}
+[31merror[39m: B2C payout failed {"error":"Request failed with status code 400","service":"payme","timestamp":"2026-02-03T14:48:27.819Z"}
+PASS tests/customer.test.js
+  Customer Service
+    Customer Creation
+      ΓêÜ should create a new customer (496 ms)
+    Customer Retrieval
+      ΓêÜ should get customer by ID (2 ms)
+    Customer Search
+      ΓêÜ should search customers by name (4 ms)
+
+[31merror[39m: B2C payout failed {"error":"Request failed with status code 400","service":"payme","timestamp":"2026-02-03T14:48:28.064Z"}
+[31merror[39m: B2C payout failed {"error":"Request failed with status code 403","service":"payme","timestamp":"2026-02-03T14:48:28.136Z"}
+PASS tests/mpesa.test.js (7.189 s)
+  M-Pesa Integration
+    Phone Number Normalization
+      ΓêÜ should normalize phone number with plus sign (1305 ms)
+      ΓêÜ should convert 254 to +254 format (2 ms)
+      ΓêÜ should convert 0 prefix to +254 format (2 ms)
+      ΓêÜ should handle 9-digit phone numbers (1 ms)
+      ΓêÜ should throw error for null phone (167 ms)
+    Response Formatting
+      ΓêÜ should format successful M-Pesa response (4 ms)
+      ΓêÜ should format failed response (2 ms)
+      ΓêÜ should handle null response (4 ms)
+    Constants Export
+      ΓêÜ should export wallet paybill constant (2 ms)
+      ΓêÜ should export wallet account reference constant (1 ms)
+    Callback Validation
+      ΓêÜ should validate successful callback (142 ms)
+      ΓêÜ should validate failed callback (1 ms)
+      ΓêÜ should validate callback signature (2 ms)
+      ΓêÜ should validate callback timestamp (1 ms)
+      ΓêÜ should validate callback structure (1 ms)
+      ΓêÜ should sanitize callback data (2 ms)
+      ΓêÜ should extract callback metadata (1 ms)
+    STK Push - Validation
+      ΓêÜ should validate phone parameter is required for token purchase (41 ms)
+      ΓêÜ should validate amount parameter is required (4 ms)
+      ΓêÜ should validate accountReference parameter is required (4 ms)
+      ΓêÜ should throw error when MPESA_PASSKEY missing (1511 ms)
+      ΓêÜ should throw error when consumer credentials missing (5 ms)
+    Business Payment - Validation
+      ΓêÜ should throw error when payment config is null (7 ms)
+      ΓêÜ should throw error when payment config is inactive (4 ms)
+    B2C Payout - Validation
+      ΓêÜ should throw error when B2C initiator missing (245 ms)
+      ΓêÜ should throw error when B2C security credential missing (245 ms)
+      ΓêÜ should throw error when B2C shortcode missing (71 ms)
+
+[32minfo[39m: Notification 1 created for user 1 {"service":"payme","timestamp":"2026-02-03T14:48:28.707Z"}
+[32minfo[39m: In-app notification ready: 1 {"service":"payme","timestamp":"2026-02-03T14:48:28.721Z"}
+[31merror[39m: Error creating notification User 999 not found {"service":"payme","stack":"Error: User 999 not found\n    at Object.createNotification (C:\\Users\\kkc12\\payme\\src\\services\\notification.service.js:56:15)\n    at processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at Object.<anonymous> (C:\\Users\\kkc12\\payme\\tests\\notification.test.js:105:7)","timestamp":"2026-02-03T14:48:28.823Z"}
+PASS tests/notification.test.js (7.839 s)
+  Notification Service
+    Notification Creation
+      ΓêÜ should create a notification (4318 ms)
+      ΓêÜ should throw error when user not found (106 ms)
+
+PASS tests/businesses.test.js
+  Businesses Service
+    Business Creation
+      ΓêÜ should create a new business for user (355 ms)
+      ΓêÜ should validate business name is provided (27 ms)
+    Business Retrieval
+      ΓêÜ should get business by ID if user owns it (4 ms)
+      ΓêÜ should throw error if user does not own business (10 ms)
+      ΓêÜ should get all businesses for user (3 ms)
+    Business Updates
+      ΓêÜ should update business details (2 ms)
+
+PASS tests/credit.test.js
+  Credit Service
+    Credit Accounts
+      ΓêÜ should get credit account by ID (389 ms)
+      ΓêÜ should throw error if account not found (64 ms)
+      ΓêÜ should get all credit accounts for business (4 ms)
+      ΓêÜ should update credit account (2 ms)
+      ΓêÜ should deactivate credit account with zero balance (2 ms)
+      ΓêÜ should throw error when deactivating account with outstanding balance (2 ms)
+    Credit Sales
+      ΓêÜ should get credit sales for account (2 ms)
+      ΓêÜ should get credit sale with details (1 ms)
+    Credit Payments
+      ΓêÜ should get credit payments for account (2 ms)
+    Credit Ledger
+      ΓêÜ should get credit ledger for account (2 ms)
+    Credit Reporting
+      ΓêÜ should get credit summary for business (3 ms)
+      ΓêÜ should get aging report for business (3 ms)
+      ΓêÜ should get customer statement (2 ms)
+
+PASS tests/record.test.js (11.83 s)
+  Record Service
+    Module Exports
+      ΓêÜ should export createRecord function (8310 ms)
+      ΓêÜ should export getRecordById function (1 ms)
+      ΓêÜ should export getRecords function (1 ms)
+      ΓêÜ should export getRecordsByDateRange function (1 ms)
+      ΓêÜ should export calculateTotals function (2 ms)
+      ΓêÜ should export processM2PesaCallback function (2 ms)
+      ΓêÜ should export getDashboardInsights function (1 ms)
+    Function Signatures
+      ΓêÜ createRecord should be async (1 ms)
+      ΓêÜ getRecordById should be async (1 ms)
+      ΓêÜ getRecords should be async (1 ms)
+      ΓêÜ getRecordsByDateRange should be async (1 ms)
+      ΓêÜ calculateTotals should be async (1 ms)
+      ΓêÜ processM2PesaCallback should be async (1 ms)
+      ΓêÜ getDashboardInsights should be async (1 ms)
+    createRecord Parameters
+      ΓêÜ should accept object with business_id (1 ms)
+      ΓêÜ should accept object with user_id (1 ms)
+      ΓêÜ should accept object with type field (1 ms)
+      ΓêÜ should accept object with category field (1 ms)
+      ΓêÜ should accept object with amount field (1 ms)
+      ΓêÜ should accept object with transaction_date field
+      ΓêÜ should accept optional items array
+      ΓêÜ should accept optional payment_method (1 ms)
+      ΓêÜ should accept optional mpesa_data object (1 ms)
+      ΓêÜ should accept optional reference_id for idempotency (1 ms)
+      ΓêÜ should accept optional description field (1 ms)
+      ΓêÜ should accept optional product_id field (1 ms)
+      ΓêÜ should accept optional credit_due_date (1 ms)
+    Record Types
+      ΓêÜ should validate record type is one of allowed types
+      ΓêÜ should support sales type
+      ΓêÜ should support hp type (1 ms)
+      ΓêÜ should support credit type (1 ms)
+      ΓêÜ should support inventory type
+      ΓêÜ should support expense type (1 ms)
+    Validation
+      ΓêÜ should throw error for invalid record type (1 ms)
+      ΓêÜ should throw error if amount is not greater than 0
+      ΓêÜ should throw error if insufficient tokens (1 ms)
+      ΓêÜ should check wallet balance before deducting token
+    Token Deduction (Revenue Guard)
+      ΓêÜ should deduct exactly 1 token per record (1 ms)
+      ΓêÜ should track token_deducted field
+      ΓêÜ should use atomic transaction for token and record
+      ΓêÜ should generate revenue_guard_reference (1 ms)
+      ΓêÜ should not deduct token if record creation fails (1 ms)
+    Idempotency
+      ΓêÜ should prevent duplicate records with reference_id (1 ms)
+      ΓêÜ should return existing record if reference_id already exists (1 ms)
+      ΓêÜ should log warning when duplicate detected (1 ms)
+    Google Sheets Sync
+      ΓêÜ should sync record to Google Sheets if enabled (1 ms)
+      ΓêÜ should set synced_to_sheets flag on success (1 ms)
+      ΓêÜ should capture sync error but not fail request
+      ΓêÜ should store sheets_sync_error if sync fails (1 ms)
+    M-Pesa Integration
+      ΓêÜ should accept mpesa_data object (1 ms)
+      ΓêÜ should extract mpesaReceiptNumber from mpesa_data (1 ms)
+      ΓêÜ should extract phoneNumber from mpesa_data
+      ΓêÜ should extract transactionDate from mpesa_data (1 ms)
+      ΓêÜ should extract transactionId from mpesa_data (1 ms)
+    Line Items
+      ΓêÜ should create line items if provided (1 ms)
+      ΓêÜ should link items to record with record_id (1 ms)
+      ΓêÜ should calculate total_amount for each item (1 ms)
+      ΓêÜ should support cost_per_unit for items (1 ms)
+    getRecordById Function
+      ΓêÜ should accept business_id parameter (1 ms)
+      ΓêÜ should accept record_id parameter (1 ms)
+      ΓêÜ should return record with items included (1 ms)
+    getRecords Function
+      ΓêÜ should accept business_id parameter (1 ms)
+      ΓêÜ should accept optional options object (1 ms)
+    getRecordsByDateRange Function
+      ΓêÜ should accept business_id parameter
+      ΓêÜ should accept startDate parameter (1 ms)
+      ΓêÜ should accept endDate parameter (1 ms)
+      ΓêÜ should filter by date range
+    calculateTotals Function
+      ΓêÜ should accept business_id parameter
+      ΓêÜ should calculate income total
+      ΓêÜ should calculate expense total
+      ΓêÜ should calculate net profit
+    processM2PesaCallback Function
+      ΓêÜ should accept callback data object (1 ms)
+      ΓêÜ should process M-Pesa transaction reference (1 ms)
+      ΓêÜ should update record status (1 ms)
+    getDashboardInsights Function
+      ΓêÜ should accept business_id parameter (1 ms)
+      ΓêÜ should return summary statistics (1 ms)
+      ΓêÜ should include income data (1 ms)
+      ΓêÜ should include expense data (1 ms)
+      ΓêÜ should include trend data (1 ms)
+      ΓêÜ should include recent records (1 ms)
+    Credit Records
+      ΓêÜ should set credit_status to pending for credit type (1 ms)
+      ΓêÜ should require credit_due_date for credit type
+    M-Pesa Fields
+      ΓêÜ should store mpesa_receipt_number
+      ΓêÜ should store mpesa_sender_name (1 ms)
+      ΓêÜ should store mpesa_sender_phone (1 ms)
+      ΓêÜ should store mpesa_transaction_date (1 ms)
+      ΓêÜ should store mpesa_transaction_id
+      ΓêÜ should mark callback_processed if mpesa_data provided
+
+PASS tests/googleSheets.test.js (12.001 s)
+  Google Sheets Integration Service
+    Exports Validation
+      ΓêÜ should export getGoogleAuthUrl function (8297 ms)
+      ΓêÜ should export exchangeAuthCode function (3 ms)
+      ΓêÜ should export getOrCreateBusinessSheet function (2 ms)
+      ΓêÜ should export syncRecordToGoogleSheets function (2 ms)
+      ΓêÜ should export batchSyncRecords function (3 ms)
+      ΓêÜ should export fetchRecordsFromGoogleSheets function (1 ms)
+      ΓêÜ should have default export with all functions (2 ms)
+    OAuth Configuration
+      ΓêÜ should require GOOGLE_SHEETS_CLIENT_ID (2 ms)
+      ΓêÜ should require GOOGLE_SHEETS_CLIENT_SECRET (2 ms)
+      ΓêÜ should support GOOGLE_SHEETS_REDIRECT_URL configuration (2 ms)
+      ΓêÜ should use default redirect URL if not provided (1 ms)
+    Google Sheets Feature Flag
+      ΓêÜ should respect GOOGLE_SHEETS_ENABLED flag (1 ms)
+      ΓêÜ should sync when GOOGLE_SHEETS_ENABLED is true (1 ms)
+      ΓêÜ should skip sync when GOOGLE_SHEETS_ENABLED is not set (2 ms)
+    Function Signatures
+      ΓêÜ getGoogleAuthUrl should be callable with no arguments (3 ms)
+      ΓêÜ exchangeAuthCode should accept code string parameter (1 ms)
+      ΓêÜ getOrCreateBusinessSheet should accept businessId and businessName (1 ms)
+      ΓêÜ syncRecordToGoogleSheets should accept businessId, spreadsheetId, and record (1 ms)
+      ΓêÜ batchSyncRecords should accept businessId, spreadsheetId, and records array (1 ms)
+      ΓêÜ fetchRecordsFromGoogleSheets should accept businessId, spreadsheetId, and optional dateRange (1 ms)
+    Service Structure
+      ΓêÜ should have exactly 6 named exports (2 ms)
+      ΓêÜ should be a valid ES module (1 ms)
+    Async Functions
+      ΓêÜ exchangeAuthCode should be async (10 ms)
+      ΓêÜ getOrCreateBusinessSheet should be async (11 ms)
+      ΓêÜ syncRecordToGoogleSheets should be async (2 ms)
+      ΓêÜ batchSyncRecords should be async (1 ms)
+      ΓêÜ fetchRecordsFromGoogleSheets should be async (8 ms)
+    Parameter Validation
+      ΓêÜ getOrCreateBusinessSheet should handle businessId parameter (3 ms)
+      ΓêÜ syncRecordToGoogleSheets should handle all three parameters (184 ms)
+      ΓêÜ batchSyncRecords should handle empty records array (1 ms)
+      ΓêÜ fetchRecordsFromGoogleSheets should handle optional dateRange (2 ms)
+      ΓêÜ exchangeAuthCode should handle code parameter (2 ms)
+    Service Availability
+      ΓêÜ should be importable from #services path (1 ms)
+      ΓêÜ should have correct module path (1 ms)
+    Google Sheets Scope Configuration
+      ΓêÜ should have drive scope for file operations (1 ms)
+      ΓêÜ should have spreadsheets scope for data operations (1 ms)
+    OAuth URL Generation
+      ΓêÜ getGoogleAuthUrl should return non-empty string (2 ms)
+      ΓêÜ getGoogleAuthUrl should contain oauth2 endpoint (2 ms)
+      ΓêÜ getGoogleAuthUrl should include access_type parameter (1 ms)
+      ΓêÜ getGoogleAuthUrl should include scope parameter (1 ms)
+    Service Account Support
+      ΓêÜ should support service account authentication (1 ms)
+      ΓêÜ should support refresh token caching (1 ms)
+      ΓêÜ should support access token caching (1 ms)
+    Record Format Support
+      ΓêÜ syncRecordToGoogleSheets should support records with transaction_date (2 ms)
+      ΓêÜ syncRecordToGoogleSheets should support records with M-Pesa fields (1 ms)
+      ΓêÜ syncRecordToGoogleSheets should support records with items array (1 ms)
+      ΓêÜ batchSyncRecords should accept multiple records (1 ms)
+      ΓêÜ fetchRecordsFromGoogleSheets should return array of records (1 ms)
+
+A worker process has failed to exit gracefully and has been force exited. This is likely caused by tests leaking due to improper teardown. Try running with --detectOpenHandles to find leaks. Active timers can also cause this, ensure that .unref() was called on them.
+Test Suites: 19 passed, 19 total
+Tests:       624 passed, 624 total
+Snapshots:   0 total
+Time:        13.305 s
+Ran all test suites.

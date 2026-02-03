@@ -1,6 +1,6 @@
 import { eq, and, or, like, desc, asc, sql } from 'drizzle-orm';
 import { db } from '#config/database.js';
-import { logger } from '#config/logger.js';
+import logger from '#config/logger.js';
 import {
   customers,
   customerNotes,

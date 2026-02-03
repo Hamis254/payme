@@ -554,3 +554,20 @@ export const getWalletStats = async (userId, businessId) => {
     throw e;
   }
 };
+
+// ============ TOKEN PACKAGES & HELPERS ============
+
+export const TOKEN_PACKAGES = [
+  { tokens: 30, price: 50, savings: 10 },
+  { tokens: 70, price: 100, savings: 40 },
+  { tokens: 150, price: 200, savings: 100 },
+  { tokens: 400, price: 500, savings: 300 },
+  { tokens: 850, price: 1000, savings: 700 },
+];
+
+export const getTokenPackages = () => TOKEN_PACKAGES;
+
+export const calculatePackagePrice = (tokens) => {
+  const pkg = TOKEN_PACKAGES.find(p => p.tokens === tokens);
+  return pkg ? pkg.price : tokens * 2; // Default: 2 KSH per token
+};

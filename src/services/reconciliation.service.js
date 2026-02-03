@@ -1,6 +1,7 @@
 // reconciliation.service.js
 import { db, sql } from '#config/database.js';
-import { sales, payments } from '#models/sales.model.js';
+import { sales } from '#models/sales.model.js';
+import { payments } from '#models/payments.model.js';
 import { expenses } from '#models/expense.model.js';
 import { walletTransactions } from '#models/myWallet.model.js';
 import {
