@@ -375,3 +375,16 @@
 {"error":"Request failed with status code 400","level":"error","message":"B2C payout failed","service":"payme","timestamp":"2026-02-03T15:10:39.264Z"}
 {"error":"Request failed with status code 400","level":"error","message":"B2C payout failed","service":"payme","timestamp":"2026-02-03T15:10:39.505Z"}
 {"error":"Request failed with status code 403","level":"error","message":"B2C payout failed","service":"payme","timestamp":"2026-02-03T15:10:39.581Z"}
+{"error":"Missing required parameters: phone, amount, accountReference","level":"error","message":"Token purchase STK push failed","service":"payme","timestamp":"2026-02-03T15:34:47.896Z"}
+{"error":"Missing required parameters: phone, amount, accountReference","level":"error","message":"Token purchase STK push failed","service":"payme","timestamp":"2026-02-03T15:34:47.899Z"}
+{"error":"Missing required parameters: phone, amount, accountReference","level":"error","message":"Token purchase STK push failed","service":"payme","timestamp":"2026-02-03T15:34:47.905Z"}
+{"level":"error","message":"Error creating the user: Error: User with this email already exists","service":"payme","timestamp":"2026-02-03T15:34:48.126Z"}
+{"level":"error","message":"Error authenticating user: Error: User not found","service":"payme","timestamp":"2026-02-03T15:34:48.172Z"}
+{"error":"Request failed with status code 400","level":"error","message":"Token purchase STK push failed","service":"payme","timestamp":"2026-02-03T15:34:49.243Z"}
+{"error":"Missing M-Pesa OAuth credentials (CONSUMER_KEY/CONSUMER_SECRET)","level":"error","message":"Token purchase STK push failed","service":"payme","timestamp":"2026-02-03T15:34:49.246Z"}
+{"error":"Business payment configuration is required. Please setup your M-Pesa credentials first.","level":"error","message":"Business payment STK push failed","service":"payme","timestamp":"2026-02-03T15:34:49.249Z"}
+{"error":"Payment configuration is inactive. Please activate in settings.","level":"error","message":"Business payment STK push failed","service":"payme","timestamp":"2026-02-03T15:34:49.252Z"}
+{"error":"Request failed with status code 400","level":"error","message":"B2C payout failed","service":"payme","timestamp":"2026-02-03T15:34:49.536Z"}
+{"level":"error","message":"Error creating notification User 999 not found","service":"payme","stack":"Error: User 999 not found\n    at Object.createNotification (C:\\Users\\kkc12\\payme\\src\\services\\notification.service.js:56:15)\n    at processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at Object.<anonymous> (C:\\Users\\kkc12\\payme\\tests\\notification.test.js:105:7)","timestamp":"2026-02-03T15:34:49.627Z"}
+{"error":"Request failed with status code 400","level":"error","message":"B2C payout failed","service":"payme","timestamp":"2026-02-03T15:34:49.780Z"}
+{"error":"Request failed with status code 403","level":"error","message":"B2C payout failed","service":"payme","timestamp":"2026-02-03T15:34:49.853Z"}
