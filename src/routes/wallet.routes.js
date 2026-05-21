@@ -1,6 +1,7 @@
 import express from 'express';
 import { authenticateToken, requireRole } from '#middleware/auth.middleware.js';
 import { webhookLimiter } from '#middleware/rateLimiter.middleware.js';
+import { validateBusinessId } from '#middleware/businessId.middleware.js';
 import {
   getWalletBalance,
   initiateTokenPurchaseHandler,
@@ -17,7 +18,11 @@ const router = express.Router();
 
 // M-Pesa callback for token purchases (no auth required)
 // Rate limited to prevent abuse
-router.post('/callback/token-purchase', webhookLimiter, tokenPurchaseCallbackHandler);
+router.post(
+  '/callback/token-purchase',
+  webhookLimiter,
+  tokenPurchaseCallbackHandler
+);
 
 // Get available token packages (no auth required)
 router.get('/packages', getTokenPackagesHandler);
@@ -27,16 +32,28 @@ router.get('/packages', getTokenPackagesHandler);
 router.use(authenticateToken);
 
 // Get wallet balance for a business
-router.get('/business/:businessId', getWalletBalance);
+router.get(
+  '/business/:businessId',
+  validateBusinessId('params'),
+  getWalletBalance
+);
 
 // Initiate token purchase via M-Pesa
 router.post('/purchase', initiateTokenPurchaseHandler);
 
 // Get wallet transaction history
-router.get('/business/:businessId/transactions', getWalletTransactionsHandler);
+router.get(
+  '/business/:businessId/transactions',
+  validateBusinessId('params'),
+  getWalletTransactionsHandler
+);
 
 // Get token purchase history
-router.get('/business/:businessId/purchases', getTokenPurchasesHandler);
+router.get(
+  '/business/:businessId/purchases',
+  validateBusinessId('params'),
+  getTokenPurchasesHandler
+);
 
 // ============ ADMIN ONLY ROUTES ============
 

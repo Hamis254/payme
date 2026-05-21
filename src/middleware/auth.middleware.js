@@ -15,7 +15,7 @@ export const authenticateToken = (req, res, next) => {
     const decoded = jwttoken.verify(token);
     req.user = decoded;
 
-    logger.info(`User authenticated: ${decoded.email} (${decoded.role})`);
+    logger.info(`User authenticated: ${decoded.name} (${decoded.role})`);
     next();
   } catch (e) {
     logger.error('Authentication error:', e);
@@ -46,7 +46,7 @@ export const requireRole = allowedRoles => {
 
       if (!allowedRoles.includes(req.user.role)) {
         logger.warn(
-          `Access denied for user ${req.user.email} with role ${req.user.role}. Required: ${allowedRoles.join(', ')}`
+          `Access denied for user ${req.user.name} with role ${req.user.role}. Required: ${allowedRoles.join(', ')}`
         );
         return res.status(403).json({
           error: 'Access denied',
@@ -63,4 +63,20 @@ export const requireRole = allowedRoles => {
       });
     }
   };
+};
+
+export const attachUserIfPresent = (req, _res, next) => {
+  try {
+    const token = req.cookies?.token;
+    if (!token) {
+      return next();
+    }
+
+    const decoded = jwttoken.verify(token);
+    req.user = decoded;
+    return next();
+  } catch {
+    // Silent fail: this middleware is only for optional context enrichment.
+    return next();
+  }
 };

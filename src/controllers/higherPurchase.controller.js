@@ -1,4 +1,8 @@
 import logger from '#config/logger.js';
+import { db } from '#config/database.js';
+import { businesses } from '#models/setting.model.js';
+import { and, eq } from 'drizzle-orm';
+import { AuthorizationError } from '#middleware/errorHandler.middleware.js';
 import {
   createAgreement,
   getAgreementById,
@@ -20,15 +24,30 @@ import {
 } from '#validations/higherPurchase.validation.js';
 import { formatValidationError } from '#utils/format.js';
 
+async function assertBusinessOwnership(userId, businessId) {
+  const [business] = await db
+    .select({ id: businesses.id })
+    .from(businesses)
+    .where(and(eq(businesses.id, businessId), eq(businesses.user_id, userId)))
+    .limit(1);
+
+  if (!business) {
+    throw new AuthorizationError('Business not found or access denied');
+  }
+}
+
 /**
  * POST /api/hire-purchase/:businessId/create
  * Create a new hire purchase agreement
  */
 export async function createAgreementHandler(req, res, next) {
   try {
+    const businessId = parseInt(req.params.businessId);
+    await assertBusinessOwnership(req.user.id, businessId);
+
     const validationResult = createHirePurchaseSchema.safeParse({
       ...req.body,
-      businessId: parseInt(req.params.businessId),
+      businessId,
       createdBy: req.user.id,
     });
 
@@ -75,6 +94,7 @@ export async function createAgreementHandler(req, res, next) {
 export async function getAgreementHandler(req, res, next) {
   try {
     const { businessId, agreementId } = req.params;
+    await assertBusinessOwnership(req.user.id, parseInt(businessId));
 
     const agreement = await getAgreementById(parseInt(agreementId));
 
@@ -100,8 +120,11 @@ export async function getAgreementHandler(req, res, next) {
  */
 export async function listAgreementsHandler(req, res, next) {
   try {
+    const businessId = parseInt(req.params.businessId);
+    await assertBusinessOwnership(req.user.id, businessId);
+
     const validationResult = hirePurchaseQuerySchema.safeParse({
-      businessId: parseInt(req.params.businessId),
+      businessId,
       ...req.query,
       limit: req.query.limit ? parseInt(req.query.limit) : 50,
       offset: req.query.offset ? parseInt(req.query.offset) : 0,
@@ -133,6 +156,8 @@ export async function listAgreementsHandler(req, res, next) {
  */
 export async function recordPaymentHandler(req, res, next) {
   try {
+    await assertBusinessOwnership(req.user.id, parseInt(req.params.businessId));
+
     const validationResult = recordInstallmentPaymentSchema.safeParse({
       ...req.body,
       agreementId: parseInt(req.params.agreementId),
@@ -147,13 +172,10 @@ export async function recordPaymentHandler(req, res, next) {
 
     const result = await recordInstallmentPayment(validationResult.data);
 
-    logger.info(
-      `Installment payment recorded by user ${req.user.id}`,
-      {
-        installmentId: result.installment.id,
-        agreementId: req.params.agreementId,
-      }
-    );
+    logger.info(`Installment payment recorded by user ${req.user.id}`, {
+      installmentId: result.installment.id,
+      agreementId: req.params.agreementId,
+    });
 
     return res.status(200).json({
       success: true,
@@ -182,6 +204,7 @@ export async function recordPaymentHandler(req, res, next) {
 export async function getOverdueHandler(req, res, next) {
   try {
     const { businessId } = req.params;
+    await assertBusinessOwnership(req.user.id, parseInt(businessId));
 
     const overdue = await getOverdueInstallments(parseInt(businessId));
 
@@ -204,9 +227,13 @@ export async function getOverdueHandler(req, res, next) {
 export async function getUpcomingHandler(req, res, next) {
   try {
     const { businessId } = req.params;
+    await assertBusinessOwnership(req.user.id, parseInt(businessId));
     const daysAhead = req.query.daysAhead ? parseInt(req.query.daysAhead) : 30;
 
-    const upcoming = await getUpcomingInstallments(parseInt(businessId), daysAhead);
+    const upcoming = await getUpcomingInstallments(
+      parseInt(businessId),
+      daysAhead
+    );
 
     return res.status(200).json({
       success: true,
@@ -227,6 +254,7 @@ export async function getUpcomingHandler(req, res, next) {
 export async function getSummaryHandler(req, res, next) {
   try {
     const { businessId } = req.params;
+    await assertBusinessOwnership(req.user.id, parseInt(businessId));
 
     const summary = await getAgreementSummary(parseInt(businessId));
     const distribution = await getStatusDistribution(parseInt(businessId));
@@ -250,6 +278,7 @@ export async function getSummaryHandler(req, res, next) {
  */
 export async function getPaymentHistoryHandler(req, res, next) {
   try {
+    await assertBusinessOwnership(req.user.id, parseInt(req.params.businessId));
     const { agreementId } = req.params;
 
     const history = await getPaymentHistory(parseInt(agreementId));
@@ -271,6 +300,7 @@ export async function getPaymentHistoryHandler(req, res, next) {
  */
 export async function updateStatusHandler(req, res, next) {
   try {
+    await assertBusinessOwnership(req.user.id, parseInt(req.params.businessId));
     const validationResult = updateHirePurchaseSchema.safeParse(req.body);
 
     if (!validationResult.success) {
@@ -291,7 +321,9 @@ export async function updateStatusHandler(req, res, next) {
 
     const updated = await updateAgreementStatus(parseInt(agreementId), status);
 
-    logger.info(`Agreement ${agreementId} status updated to ${status} by user ${req.user.id}`);
+    logger.info(
+      `Agreement ${agreementId} status updated to ${status} by user ${req.user.id}`
+    );
 
     return res.status(200).json({
       success: true,

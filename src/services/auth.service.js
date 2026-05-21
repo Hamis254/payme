@@ -25,34 +25,37 @@ export const comparePassword = async (password, hashedPassword) => {
 export const createUser = async ({
   name,
   phone_number,
-  email,
   password,
   role = 'user',
 }) => {
   try {
+    // Check if user with this name already exists
     const existingUser = await db
       .select()
       .from(users)
-      .where(eq(users.email, email))
+      .where(eq(users.name, name))
       .limit(1);
 
-    if (existingUser.length > 0)
-      throw new Error('User with this email already exists');
+    if (existingUser.length > 0) {
+      throw new Error('User with this name already exists');
+    }
 
+    // Check if phone number already exists
     const existingPhone = await db
       .select()
       .from(users)
       .where(eq(users.phone_number, phone_number))
       .limit(1);
 
-    if (existingPhone.length > 0)
+    if (existingPhone.length > 0) {
       throw new Error('User with this phone number already exists');
+    }
 
     const password_hash = await hashPassword(password);
 
     const [newUser] = await db
       .insert(users)
-      .values({ name, phone_number, email, password: password_hash, role })
+      .values({ name, phone_number, password: password_hash, role })
       .returning({
         id: users.id,
         name: users.name,
@@ -62,7 +65,7 @@ export const createUser = async ({
         created_at: users.created_at,
       });
 
-    logger.info(`User ${newUser.email} created successfully`);
+    logger.info(`User ${newUser.name} created successfully`);
     return newUser;
   } catch (e) {
     logger.error(`Error creating the user: ${e}`);
@@ -70,12 +73,12 @@ export const createUser = async ({
   }
 };
 
-export const authenticateUser = async ({ email, password }) => {
+export const authenticateUser = async ({ name, password }) => {
   try {
     const [existingUser] = await db
       .select()
       .from(users)
-      .where(eq(users.email, email))
+      .where(eq(users.name, name))
       .limit(1);
 
     if (!existingUser) {
@@ -91,7 +94,7 @@ export const authenticateUser = async ({ email, password }) => {
       throw new Error('Invalid password');
     }
 
-    logger.info(`User ${existingUser.email} authenticated successfully`);
+    logger.info(`User ${existingUser.name} authenticated successfully`);
     return {
       id: existingUser.id,
       name: existingUser.name,

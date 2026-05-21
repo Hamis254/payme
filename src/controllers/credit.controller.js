@@ -1,6 +1,6 @@
 // controllers/credit.controller.js
 import { db } from '#config/database.js';
-import { deductTokens, refundTokens } from '#middleware/revenueGuard.middleware.js';
+// Token deduction centralized in `createRecord` service
 import {
   creditAccounts,
   creditLedger,
@@ -8,6 +8,7 @@ import {
   creditPayments,
 } from '#models/credit.model.js';
 import { sales } from '#models/sales.model.js';
+import { businesses } from '#models/setting.model.js';
 import { eq, and } from 'drizzle-orm';
 import {
   createCreditAccountSchema,
@@ -16,8 +17,22 @@ import {
 } from '#validations/credit.validation.js';
 import { formatValidationError } from '#utils/format.js';
 import logger from '#config/logger.js';
+import { AuthorizationError } from '#middleware/errorHandler.middleware.js';
 import { catchAsync } from '#utils/catchAsync.js';
 import * as creditService from '#services/credit.service.js';
+import * as recordService from '#services/record.service.js';
+
+async function assertBusinessOwnership(userId, businessId) {
+  const [business] = await db
+    .select({ id: businesses.id })
+    .from(businesses)
+    .where(and(eq(businesses.id, businessId), eq(businesses.user_id, userId)))
+    .limit(1);
+
+  if (!business) {
+    throw new AuthorizationError('Business not found or access denied');
+  }
+}
 
 export async function createCreditAccount(req, res, next) {
   const requestId = req.revenueGuard?.request_id;
@@ -61,27 +76,21 @@ export async function createCreditAccount(req, res, next) {
         note: 'Account opened',
         created_at: new Date(),
       });
-    });
 
-    // Deduct tokens after successful account creation
-    try {
-      await deductTokens(
-        req.revenueGuard.wallet_id,
-        req.revenueGuard.tokens_to_deduct,
+      // Create a revenue record (token deduction) atomically within the same transaction
+      await recordService.createRecord(
         {
-          account_id: accountId,
           business_id: businessId,
-          customer_name: customerName,
-          credit_limit: creditLimit || 0,
-        }
+          user_id: req.user.id,
+          type: 'credit',
+          category: 'account_open',
+          amount: 0,
+          transaction_date: new Date(),
+          description: `Credit account opened for ${customerName}`,
+        },
+        tx
       );
-    } catch (deductError) {
-      logger.error('Token deduction failed for credit account', {
-        account_id: accountId,
-        error: deductError.message,
-      });
-      throw deductError;
-    }
+    });
 
     logger.info(
       `Credit account created for customer ${customerName} (ID: ${accountId})`,
@@ -99,22 +108,7 @@ export async function createCreditAccount(req, res, next) {
       request_id: requestId,
     });
 
-    // Refund tokens if deduction succeeded but something else failed
-    if (req.revenueGuard?.wallet_id) {
-      try {
-        await refundTokens(
-          req.revenueGuard.wallet_id,
-          req.revenueGuard.tokens_to_deduct,
-          `Credit account creation error: ${err.message}`
-        );
-      } catch (refundError) {
-        logger.error('Refund failed - manual intervention needed', {
-          wallet_id: req.revenueGuard.wallet_id,
-          error: refundError.message,
-          request_id: requestId,
-        });
-      }
-    }
+    // Token refunds are handled within `createRecord` transaction if needed
 
     next(err);
   }
@@ -210,27 +204,28 @@ export async function createCreditSale(req, res, next) {
         note: `Credit sale #${saleId}`,
         created_at: new Date(),
       });
-    });
 
-    // Deduct tokens after successful credit sale creation
-    try {
-      await deductTokens(
-        req.revenueGuard.wallet_id,
-        req.revenueGuard.tokens_to_deduct,
+      // Create corresponding revenue record (deduct token) inside same transaction
+      await recordService.createRecord(
         {
-          credit_sale_id: creditSaleId,
-          sale_id: saleId,
-          account_id: accountId,
-          outstanding_amount: outstandingAmount,
-        }
+          business_id: parsed.data.businessId,
+          user_id: req.user.id,
+          type: 'credit',
+          category: 'credit_sale',
+          amount: Number(outstandingAmount),
+          transaction_date: new Date(),
+          description: `Credit sale #${saleId} to account #${accountId}`,
+          items: [
+            {
+              item_name: `Credit sale #${saleId}`,
+              quantity: 1,
+              unit_price: Number(outstandingAmount),
+            },
+          ],
+        },
+        tx
       );
-    } catch (deductError) {
-      logger.error('Token deduction failed for credit sale', {
-        credit_sale_id: creditSaleId,
-        error: deductError.message,
-      });
-      throw deductError;
-    }
+    });
 
     logger.info(
       `Credit sale created: Sale #${saleId} linked to account #${accountId}`,
@@ -248,22 +243,7 @@ export async function createCreditSale(req, res, next) {
       request_id: requestId,
     });
 
-    // Refund tokens if deduction succeeded but something else failed
-    if (req.revenueGuard?.wallet_id) {
-      try {
-        await refundTokens(
-          req.revenueGuard.wallet_id,
-          req.revenueGuard.tokens_to_deduct,
-          `Credit sale creation error: ${err.message}`
-        );
-      } catch (refundError) {
-        logger.error('Refund failed - manual intervention needed', {
-          wallet_id: req.revenueGuard.wallet_id,
-          error: refundError.message,
-          request_id: requestId,
-        });
-      }
-    }
+    // Token refunds are handled within `createRecord` transaction if needed
 
     if (
       err.message.includes('not found') ||
@@ -405,10 +385,17 @@ export async function recordCreditPayment(req, res, next) {
 
 // List all credit accounts for business
 export const getCreditAccounts = catchAsync(async (req, res) => {
-  const { businessId } = req.user;
+  const businessId = Number(req.query.businessId);
+  if (Number.isNaN(businessId)) {
+    return res
+      .status(400)
+      .json({ error: 'businessId query parameter is required' });
+  }
   const { status, search, page = 1, limit = 20 } = req.query;
+  await assertBusinessOwnership(req.user.id, businessId);
 
   const accounts = await creditService.getCreditAccountsForBusiness(
+    req.user.id,
     businessId,
     { status, search, page: parseInt(page), limit: parseInt(limit) }
   );
@@ -421,12 +408,11 @@ export const getCreditAccounts = catchAsync(async (req, res) => {
 
 // Get single credit account
 export const getCreditAccount = catchAsync(async (req, res) => {
-  const { businessId } = req.user;
   const { accountId } = req.params;
 
   const account = await creditService.getCreditAccountById(
-    accountId,
-    businessId
+    req.user.id,
+    Number(accountId)
   );
 
   res.json({
@@ -437,13 +423,12 @@ export const getCreditAccount = catchAsync(async (req, res) => {
 
 // Update credit account
 export const updateCreditAccount = catchAsync(async (req, res) => {
-  const { businessId } = req.user;
   const { accountId } = req.params;
   const updates = req.body;
 
   const account = await creditService.updateCreditAccount(
-    accountId,
-    businessId,
+    req.user.id,
+    Number(accountId),
     updates
   );
 
@@ -456,10 +441,9 @@ export const updateCreditAccount = catchAsync(async (req, res) => {
 
 // Deactivate credit account
 export const deactivateCreditAccount = catchAsync(async (req, res) => {
-  const { businessId } = req.user;
   const { accountId } = req.params;
 
-  await creditService.deactivateCreditAccount(accountId, businessId);
+  await creditService.deactivateCreditAccount(req.user.id, Number(accountId));
 
   res.json({
     success: true,
@@ -469,13 +453,12 @@ export const deactivateCreditAccount = catchAsync(async (req, res) => {
 
 // Get credit sales for account
 export const getCreditSales = catchAsync(async (req, res) => {
-  const { businessId } = req.user;
   const { accountId } = req.params;
   const { status, startDate, endDate, page = 1, limit = 20 } = req.query;
 
   const sales = await creditService.getCreditSalesForAccount(
-    accountId,
-    businessId,
+    req.user.id,
+    Number(accountId),
     { status, startDate, endDate, page: parseInt(page), limit: parseInt(limit) }
   );
 
@@ -487,10 +470,12 @@ export const getCreditSales = catchAsync(async (req, res) => {
 
 // Get single credit sale with details
 export const getCreditSale = catchAsync(async (req, res) => {
-  const { businessId } = req.user;
   const { saleId } = req.params;
 
-  const sale = await creditService.getCreditSaleWithDetails(saleId, businessId);
+  const sale = await creditService.getCreditSaleWithDetails(
+    req.user.id,
+    Number(saleId)
+  );
 
   res.json({
     success: true,
@@ -500,13 +485,12 @@ export const getCreditSale = catchAsync(async (req, res) => {
 
 // Get payments for account
 export const getCreditPayments = catchAsync(async (req, res) => {
-  const { businessId } = req.user;
   const { accountId } = req.params;
   const { startDate, endDate, page = 1, limit = 20 } = req.query;
 
   const payments = await creditService.getCreditPaymentsForAccount(
-    accountId,
-    businessId,
+    req.user.id,
+    Number(accountId),
     { startDate, endDate, page: parseInt(page), limit: parseInt(limit) }
   );
 
@@ -518,13 +502,12 @@ export const getCreditPayments = catchAsync(async (req, res) => {
 
 // Get ledger entries
 export const getCreditLedger = catchAsync(async (req, res) => {
-  const { businessId } = req.user;
   const { accountId } = req.params;
   const { startDate, endDate, page = 1, limit = 50 } = req.query;
 
   const ledger = await creditService.getCreditLedgerForAccount(
-    accountId,
-    businessId,
+    req.user.id,
+    Number(accountId),
     { startDate, endDate, page: parseInt(page), limit: parseInt(limit) }
   );
 
@@ -536,9 +519,18 @@ export const getCreditLedger = catchAsync(async (req, res) => {
 
 // Get credit summary for business
 export const getCreditSummary = catchAsync(async (req, res) => {
-  const { businessId } = req.user;
+  const businessId = Number(req.query.businessId);
+  if (Number.isNaN(businessId)) {
+    return res
+      .status(400)
+      .json({ error: 'businessId query parameter is required' });
+  }
+  await assertBusinessOwnership(req.user.id, businessId);
 
-  const summary = await creditService.getCreditSummaryForBusiness(businessId);
+  const summary = await creditService.getCreditSummaryForBusiness(
+    req.user.id,
+    businessId
+  );
 
   res.json({
     success: true,
@@ -548,10 +540,15 @@ export const getCreditSummary = catchAsync(async (req, res) => {
 
 // Get aging report
 export const getAgingReport = catchAsync(async (req, res) => {
-  const { businessId } = req.user;
-  const { asOfDate } = req.query;
+  const businessId = Number(req.query.businessId);
+  if (Number.isNaN(businessId)) {
+    return res
+      .status(400)
+      .json({ error: 'businessId query parameter is required' });
+  }
+  await assertBusinessOwnership(req.user.id, businessId);
 
-  const report = await creditService.getAgingReport(businessId, asOfDate);
+  const report = await creditService.getAgingReport(req.user.id, businessId);
 
   res.json({
     success: true,
@@ -561,13 +558,12 @@ export const getAgingReport = catchAsync(async (req, res) => {
 
 // Get customer statement
 export const getCustomerStatement = catchAsync(async (req, res) => {
-  const { businessId } = req.user;
   const { accountId } = req.params;
   const { startDate, endDate } = req.query;
 
   const statement = await creditService.getCustomerStatement(
-    accountId,
-    businessId,
+    req.user.id,
+    Number(accountId),
     startDate,
     endDate
   );

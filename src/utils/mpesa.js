@@ -6,72 +6,96 @@ import base64 from 'base-64';
 // M-PESA CONFIGURATION
 // ============================================================================
 //
-// SHARED SANDBOX APP (One app, multiple shortcodes):
-// - MPESA_CONSUMER_KEY / MPESA_CONSUMER_SECRET: OAuth credentials (shared)
-// - Wallet Paybill: 650880 (for token purchases - hardcoded)
-// - Business Paybill/Till: Configured per business in payment_configs table
+// ENVIRONMENT SWITCH:
+//   Set MPESA_ENV=production in .env to go live.
+//   Default is sandbox.
 //
-// PASSKEYS:
-// Each shortcode (paybill/till) has its own passkey in Daraja portal:
-// - MPESA_PASSKEY: Passkey for the wallet paybill (650880)
-// - Per-business passkey: Stored in payment_configs.passkey column
+// TWO PAYBILL ARCHITECTURE:
+//   PayMe Platform Paybill (650880): Used for token purchases by merchants.
+//     - MPESA_PASSKEY: passkey for paybill 650880
 //
-// ACCOUNT REFERENCES:
-// - Wallet: 37605544 (fixed account for all token purchases)
-// - Business: account_reference from payment_configs (max 12 chars)
+//   Business Paybill/Till: Set per-business in payment_configs table.
+//     - Each business configures their own shortcode + passkey in Settings.
+//     - Used when initiating STK push to a customer for a sale.
+//
+// ACCOUNT REFERENCES (shown on customer's phone):
+//   Paybill: account_reference field (e.g. "SHOP001") — max 12 chars — REQUIRED
+//   Till:    account_reference field (store name) — optional, defaults to till number
 // ============================================================================
 
-// Fixed wallet paybill for token purchases
+// Fixed PayMe platform paybill for token purchases
 const WALLET_PAYBILL = '650880';
 const WALLET_ACCOUNT_REFERENCE = '37605544';
 
-// Get M-Pesa access token (shared across all operations)
+// Switch between sandbox and production with one env variable
+const MPESA_BASE_URL =
+  process.env.MPESA_ENV === 'production'
+    ? 'https://api.safaricom.co.ke'
+    : 'https://sandbox.safaricom.co.ke';
+
+/**
+ * Get M-Pesa OAuth access token.
+ * Shared across all STK push operations — uses the platform app credentials.
+ */
 const getAccessToken = async () => {
   const consumerKey = process.env.MPESA_CONSUMER_KEY;
   const consumerSecret = process.env.MPESA_CONSUMER_SECRET;
 
   if (!consumerKey || !consumerSecret) {
-    throw new Error('Missing M-Pesa OAuth credentials (CONSUMER_KEY/CONSUMER_SECRET)');
+    throw new Error(
+      'Missing M-Pesa OAuth credentials (MPESA_CONSUMER_KEY / MPESA_CONSUMER_SECRET)'
+    );
   }
 
   const auth = base64.encode(`${consumerKey}:${consumerSecret}`);
 
   const response = await axios.get(
-    'https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials',
+    `${MPESA_BASE_URL}/oauth/v1/generate?grant_type=client_credentials`,
     {
       headers: { Authorization: `Basic ${auth}` },
+      timeout: 10000,
     }
   );
 
   return response.data.access_token;
 };
 
-// Build STK Push password from shortcode, passkey, and timestamp
+/**
+ * Build the STK Push password (base64 of shortcode + passkey + timestamp)
+ * and the timestamp required by Safaricom.
+ */
 const buildMpesaPassword = (shortcode, passkey) => {
-  const timestamp = new Date()
-    .toISOString()
-    .replace(/[:-]/g, '')
-    .slice(0, 14);
+  const timestamp = new Date().toISOString().replace(/[:-]/g, '').slice(0, 14);
   const password = base64.encode(`${shortcode}${passkey}${timestamp}`);
   return { password, timestamp };
 };
 
 // ============================================================================
-// INITIATE STK PUSH - TOKEN PURCHASES (WALLET)
+// STK PUSH — TOKEN PURCHASES (PayMe Platform Paybill)
 // ============================================================================
-// Uses FIXED wallet paybill: 650880, account: 37605544
-// All token purchases go to the platform's wallet paybill
-export const initiateTokenPurchase = async ({ phone, amount, accountReference }) => {
+// All merchants buy tokens by paying into PayMe's own paybill (650880).
+// MPESA_PASSKEY must match the passkey for paybill 650880 in Daraja portal.
+// ============================================================================
+
+export const initiateTokenPurchase = async ({
+  phone,
+  amount,
+  accountReference,
+}) => {
   try {
     if (!phone || !amount || !accountReference) {
-      throw new Error('Missing required parameters: phone, amount, accountReference');
+      throw new Error(
+        'Missing required parameters: phone, amount, accountReference'
+      );
     }
 
     const accessToken = await getAccessToken();
     const passKey = process.env.MPESA_PASSKEY;
 
     if (!passKey) {
-      throw new Error('Missing MPESA_PASSKEY environment variable');
+      throw new Error(
+        'Missing MPESA_PASSKEY environment variable (required for PayMe platform paybill)'
+      );
     }
 
     const { password, timestamp } = buildMpesaPassword(WALLET_PAYBILL, passKey);
@@ -91,13 +115,14 @@ export const initiateTokenPurchase = async ({ phone, amount, accountReference })
     };
 
     logger.info('Initiating token purchase STK push', {
+      env: process.env.MPESA_ENV || 'sandbox',
       paybill: WALLET_PAYBILL,
       account: WALLET_ACCOUNT_REFERENCE,
       amount,
     });
 
     const response = await axios.post(
-      'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
+      `${MPESA_BASE_URL}/mpesa/stkpush/v1/processrequest`,
       payload,
       {
         headers: {
@@ -108,13 +133,28 @@ export const initiateTokenPurchase = async ({ phone, amount, accountReference })
       }
     );
 
-    const { ResponseCode, ResponseDescription, CheckoutRequestID, CustomerMessage } = response.data;
+    const {
+      ResponseCode,
+      ResponseDescription,
+      CheckoutRequestID,
+      CustomerMessage,
+    } = response.data;
 
     if (ResponseCode === '0') {
-      logger.info('Token purchase STK push initiated', { checkoutRequestId: CheckoutRequestID });
-      return { success: true, CheckoutRequestID, ResponseCode, ResponseDescription, CustomerMessage };
+      logger.info('Token purchase STK push initiated', {
+        checkoutRequestId: CheckoutRequestID,
+      });
+      return {
+        success: true,
+        CheckoutRequestID,
+        ResponseCode,
+        ResponseDescription,
+        CustomerMessage,
+      };
     } else {
-      throw new Error(`M-Pesa error: ${ResponseCode} - ${ResponseDescription || CustomerMessage}`);
+      throw new Error(
+        `M-Pesa error: ${ResponseCode} — ${ResponseDescription || CustomerMessage}`
+      );
     }
   } catch (e) {
     logger.error('Token purchase STK push failed', { error: e.message });
@@ -123,64 +163,101 @@ export const initiateTokenPurchase = async ({ phone, amount, accountReference })
 };
 
 // ============================================================================
-// INITIATE STK PUSH - CUSTOMER PAYMENTS (PER-BUSINESS)
+// STK PUSH — CUSTOMER PAYMENTS (Per-Business Paybill or Till)
 // ============================================================================
-// Uses business's own paybill/till from payment_configs table
-// NO FALLBACK: Requires valid payment config to exist
-export const initiateBusinessPayment = async ({ paymentConfig, phone, amount, description }) => {
+// Uses the business's own paybill or till from the payment_configs table.
+// No fallback to platform paybill — config MUST be set up first.
+//
+// Till number:  TransactionType = CustomerBuyGoodsOnline
+//               AccountReference = store name (optional, shown to customer)
+//
+// Paybill:      TransactionType = CustomerPayBillOnline
+//               AccountReference = account number (REQUIRED, max 12 chars)
+// ============================================================================
+
+export const initiateBusinessPayment = async ({
+  paymentConfig,
+  phone,
+  amount,
+  description,
+}) => {
   try {
     if (!phone || !amount || !description) {
-      throw new Error('Missing required parameters: phone, amount, description');
+      throw new Error(
+        'Missing required parameters: phone, amount, description'
+      );
     }
 
-    // STRICT: No fallback to wallet paybill allowed
     if (!paymentConfig) {
       throw new Error(
         'Business payment configuration is required. ' +
-        'Please setup your M-Pesa credentials first.'
+          'Please set up your M-Pesa credentials in Settings.'
       );
     }
 
     if (!paymentConfig.is_active) {
-      throw new Error('Payment configuration is inactive. Please activate in settings.');
+      throw new Error(
+        'Payment configuration is inactive. Please activate in Settings.'
+      );
     }
 
-    if (!paymentConfig.shortcode || !paymentConfig.passkey || !paymentConfig.account_reference) {
-      throw new Error('Payment configuration is incomplete. Please reconfigure.');
+    if (!paymentConfig.shortcode || !paymentConfig.passkey) {
+      throw new Error(
+        'Payment configuration is incomplete. Please reconfigure your M-Pesa credentials.'
+      );
     }
 
     const accessToken = await getAccessToken();
 
-    // Use business's paybill/till directly (NO FALLBACK)
     const businessShortCode = paymentConfig.shortcode;
     const passKey = paymentConfig.passkey;
-    const accountRef = paymentConfig.account_reference;
+    const isTill = paymentConfig.payment_method === 'till_number';
 
-    const { password, timestamp } = buildMpesaPassword(businessShortCode, passKey);
+    // Paybill: account_reference is the account number — REQUIRED by Safaricom
+    // Till:    account_reference is the store name — optional, defaults to till number
+    const accountRef = isTill
+      ? (paymentConfig.account_reference || businessShortCode).substring(0, 12)
+      : paymentConfig.account_reference;
+
+    if (!isTill && !accountRef) {
+      throw new Error(
+        'Account reference is required for paybill payments. ' +
+          'Please update your payment configuration.'
+      );
+    }
+
+    const { password, timestamp } = buildMpesaPassword(
+      businessShortCode,
+      passKey
+    );
 
     const payload = {
       BusinessShortCode: businessShortCode,
       Password: password,
       Timestamp: timestamp,
-      TransactionType: paymentConfig?.payment_method === 'till_number' ? 'CustomerBuyGoodsOnline' : 'CustomerPayBillOnline',
+      TransactionType: isTill
+        ? 'CustomerBuyGoodsOnline'
+        : 'CustomerPayBillOnline',
       Amount: Math.round(amount),
       PartyA: phone,
       PartyB: businessShortCode,
       PhoneNumber: phone,
       CallBackURL: process.env.MPESA_CALLBACK_URL,
       AccountReference: accountRef,
-      TransactionDesc: description,
+      TransactionDesc: description.substring(0, 13), // Safaricom max is 13 chars
     };
 
     logger.info('Initiating business payment STK push', {
+      env: process.env.MPESA_ENV || 'sandbox',
       shortcode: businessShortCode,
       paymentMethod: paymentConfig.payment_method,
+      transactionType: payload.TransactionType,
       amount,
       configVerified: paymentConfig.verified,
     });
 
     const response = await axios.post(
-      'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
+      `${MPESA_BASE_URL}/mpesa/stkpush/v1/processrequest`,
       payload,
       {
         headers: {
@@ -191,13 +268,28 @@ export const initiateBusinessPayment = async ({ paymentConfig, phone, amount, de
       }
     );
 
-    const { ResponseCode, ResponseDescription, CheckoutRequestID, CustomerMessage } = response.data;
+    const {
+      ResponseCode,
+      ResponseDescription,
+      CheckoutRequestID,
+      CustomerMessage,
+    } = response.data;
 
     if (ResponseCode === '0') {
-      logger.info('Business payment STK push initiated', { checkoutRequestId: CheckoutRequestID });
-      return { success: true, CheckoutRequestID, ResponseCode, ResponseDescription, CustomerMessage };
+      logger.info('Business payment STK push initiated', {
+        checkoutRequestId: CheckoutRequestID,
+      });
+      return {
+        success: true,
+        CheckoutRequestID,
+        ResponseCode,
+        ResponseDescription,
+        CustomerMessage,
+      };
     } else {
-      throw new Error(`M-Pesa error: ${ResponseCode} - ${ResponseDescription || CustomerMessage}`);
+      throw new Error(
+        `M-Pesa error: ${ResponseCode} — ${ResponseDescription || CustomerMessage}`
+      );
     }
   } catch (e) {
     logger.error('Business payment STK push failed', { error: e.message });
@@ -206,10 +298,16 @@ export const initiateBusinessPayment = async ({ paymentConfig, phone, amount, de
 };
 
 // ============================================================================
-// INITIATE B2C PAYOUT (Business to Customer)
+// B2C PAYOUT (Business to Customer)
 // ============================================================================
-// Used for wallet withdrawals or refunds to customer phone
-export const initiateB2CPayout = async ({ phone, amount, remarks = 'PAYME Payout' }) => {
+// Used for wallet withdrawals or refunds to a customer's phone number.
+// ============================================================================
+
+export const initiateB2CPayout = async ({
+  phone,
+  amount,
+  remarks = 'PAYME Payout',
+}) => {
   try {
     if (!phone || !amount) {
       throw new Error('Missing required parameters: phone, amount');
@@ -222,7 +320,9 @@ export const initiateB2CPayout = async ({ phone, amount, remarks = 'PAYME Payout
     const partyA = process.env.MPESA_B2C_SHORTCODE;
 
     if (!initiator || !securityCredential || !partyA) {
-      throw new Error('Missing B2C configuration (initiator, security_credential, or shortcode)');
+      throw new Error(
+        'Missing B2C configuration (MPESA_B2C_INITIATOR, MPESA_B2C_SECURITY_CREDENTIAL, or MPESA_B2C_SHORTCODE)'
+      );
     }
 
     const payload = {
@@ -237,10 +337,15 @@ export const initiateB2CPayout = async ({ phone, amount, remarks = 'PAYME Payout
       ResultURL: process.env.MPESA_B2C_RESULT_URL,
     };
 
-    logger.info('Initiating B2C payout', { phone, amount, partyA });
+    logger.info('Initiating B2C payout', {
+      env: process.env.MPESA_ENV || 'sandbox',
+      phone,
+      amount,
+      partyA,
+    });
 
     const response = await axios.post(
-      'https://sandbox.safaricom.co.ke/mpesa/b2c/v3/paymentrequest',
+      `${MPESA_BASE_URL}/mpesa/b2c/v3/paymentrequest`,
       payload,
       {
         headers: {
@@ -255,9 +360,16 @@ export const initiateB2CPayout = async ({ phone, amount, remarks = 'PAYME Payout
 
     if (ResponseCode === '0') {
       logger.info('B2C payout initiated', { conversationId: ConversationID });
-      return { success: true, ConversationID, ResponseCode, ResponseDescription };
+      return {
+        success: true,
+        ConversationID,
+        ResponseCode,
+        ResponseDescription,
+      };
     } else {
-      throw new Error(`M-Pesa B2C error: ${ResponseCode} - ${ResponseDescription}`);
+      throw new Error(
+        `M-Pesa B2C error: ${ResponseCode} — ${ResponseDescription}`
+      );
     }
   } catch (e) {
     logger.error('B2C payout failed', { error: e.message });
@@ -269,8 +381,10 @@ export const initiateB2CPayout = async ({ phone, amount, remarks = 'PAYME Payout
 // UTILITY FUNCTIONS
 // ============================================================================
 
-// Validate and normalize phone number to E.164 format
-export const normalizePhoneNumber = (phone) => {
+/**
+ * Normalize a Kenyan phone number to E.164 format (+254...)
+ */
+export const normalizePhoneNumber = phone => {
   if (!phone) throw new Error('Phone number is required');
 
   const cleaned = phone.replace(/[^\d+]/g, '');
@@ -283,8 +397,10 @@ export const normalizePhoneNumber = (phone) => {
   throw new Error('Invalid phone number format');
 };
 
-// Format M-Pesa response consistently
-export const formatMpesaResponse = (response) => {
+/**
+ * Format an M-Pesa API response into a consistent shape
+ */
+export const formatMpesaResponse = response => {
   if (!response) return null;
   return {
     success: response.ResponseCode === '0',
@@ -296,5 +412,4 @@ export const formatMpesaResponse = (response) => {
   };
 };
 
-// Export constants for reference
 export { WALLET_PAYBILL, WALLET_ACCOUNT_REFERENCE };

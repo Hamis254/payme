@@ -7,7 +7,7 @@ import logger from '#config/logger.js';
 /**
  * Log an audit event
  */
-export const logAuditEvent = async (data) => {
+export const logAuditEvent = async data => {
   try {
     const [log] = await db
       .insert(auditLogs)
@@ -218,10 +218,10 @@ export const getAuditSummary = async (businessId, days = 7) => {
 export const withAuditLogging = (handler, options) => {
   return async (...args) => {
     const [businessId, userId, data] = args;
-    
+
     try {
       const result = await handler(...args);
-      
+
       // Log successful action
       await logAuditEvent({
         businessId,
@@ -233,7 +233,7 @@ export const withAuditLogging = (handler, options) => {
         newValues: data,
         metadata: options.metadata,
       });
-      
+
       return result;
     } catch (e) {
       // Log failed action

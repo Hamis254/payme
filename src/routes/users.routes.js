@@ -10,7 +10,7 @@ import { authenticateToken, requireRole } from '#middleware/auth.middleware.js';
 const router = express.Router();
 
 // GET /users - Get all users (admin only)
-router.get('/', authenticateToken, fetchAllUsers);
+router.get('/', authenticateToken, requireRole(['admin']), fetchAllUsers);
 
 // GET /users/:id - Get user by ID (authenticated users only)
 router.get('/:id', authenticateToken, fetchUserById);

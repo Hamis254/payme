@@ -22,18 +22,26 @@ export const createMpesaReconciliationSchema = z.object({
   bank_transactions: z.number().int().nonnegative(),
   bank_amount: z.number().nonnegative(),
   investigation_notes: z.string().optional(),
-  missing_transactions: z.array(z.object({
-    date: z.string(),
-    amount: z.number(),
-    phone: z.string().optional(),
-    description: z.string().optional(),
-  })).optional(),
-  extra_transactions: z.array(z.object({
-    date: z.string(),
-    amount: z.number(),
-    phone: z.string().optional(),
-    description: z.string().optional(),
-  })).optional(),
+  missing_transactions: z
+    .array(
+      z.object({
+        date: z.string(),
+        amount: z.number(),
+        phone: z.string().optional(),
+        description: z.string().optional(),
+      })
+    )
+    .optional(),
+  extra_transactions: z
+    .array(
+      z.object({
+        date: z.string(),
+        amount: z.number(),
+        phone: z.string().optional(),
+        description: z.string().optional(),
+      })
+    )
+    .optional(),
 });
 
 // Reconciliation config schema

@@ -33,29 +33,33 @@ import { syncRecordToGoogleSheets } from '#services/googleSheets.service.js';
  * @returns {Promise<Object>} Created record with items
  * @throws {Error} If token deduction fails or record creation fails
  */
-export async function createRecord({
-  business_id,
-  user_id,
-  type,
-  category,
-  amount,
-  transaction_date,
-  items = [],
-  payment_method,
-  mpesa_data = null,
-  reference_id = null,
-  description = null,
-  product_id = null,
-  credit_due_date = null,
-}) {
+export async function createRecord(
+  {
+    business_id,
+    user_id,
+    type,
+    category,
+    amount,
+    transaction_date,
+    items = [],
+    payment_method,
+    mpesa_data = null,
+    reference_id = null,
+    description = null,
+    product_id = null,
+    credit_due_date = null,
+  },
+  trx = null
+) {
   try {
     // Validate input
     if (!['sales', 'hp', 'credit', 'inventory', 'expense'].includes(type)) {
       throw new Error(`Invalid record type: ${type}`);
     }
 
-    if (amount <= 0) {
-      throw new Error('Amount must be greater than 0');
+    // Allow zero-amount records (token-only operations) — amount may be 0
+    if (typeof amount !== 'number' || amount < 0) {
+      throw new Error('Amount must be a non-negative number');
     }
 
     // Check idempotency: prevent duplicate records
@@ -81,32 +85,34 @@ export async function createRecord({
       }
     }
 
-    // REVENUE GUARD: Atomic transaction for token + record
-    const createdRecord = await db.transaction(async tx => {
+    // If a transaction object is provided, run under it; otherwise start a new transaction
+    const client = trx || db;
+
+    const runCreate = async clientInstance => {
       // 1. Check wallet balance
-      const [wallet] = await tx
+      const [wallet] = await clientInstance
         .select()
         .from(wallets)
         .where(eq(wallets.business_id, business_id))
         .limit(1);
 
-      if (!wallet || wallet.tokens < 1) {
+      if (!wallet || wallet.balance_tokens < 1) {
         throw new Error(
           'Insufficient tokens. Please purchase tokens to create records.'
         );
       }
 
       // 2. Deduct 1 token from wallet (Revenue Guard)
-      await tx
+      await clientInstance
         .update(wallets)
         .set({
-          tokens: wallet.tokens - 1,
+          balance_tokens: wallet.balance_tokens - 1,
           updated_at: new Date(),
         })
         .where(eq(wallets.business_id, business_id));
 
       // 3. Create record with token deduction metadata
-      const [newRecord] = await tx
+      const [newRecord] = await clientInstance
         .insert(records)
         .values({
           business_id,
@@ -138,7 +144,7 @@ export async function createRecord({
 
       // 4. Create line items (if provided)
       if (items && items.length > 0) {
-        await tx.insert(record_items).values(
+        await clientInstance.insert(record_items).values(
           items.map(item => ({
             record_id: newRecord.id,
             item_name: item.item_name,
@@ -147,57 +153,75 @@ export async function createRecord({
             unit_price: String(item.unit_price),
             total_amount: String(item.quantity * item.unit_price),
             product_id: item.product_id || null,
-            cost_per_unit: item.cost_per_unit ? String(item.cost_per_unit) : null,
+            cost_per_unit: item.cost_per_unit
+              ? String(item.cost_per_unit)
+              : null,
             created_at: new Date(),
           }))
         );
       }
 
       return newRecord;
-    });
+    };
+
+    let createdRecord;
+    if (trx) {
+      // Running under caller's transaction
+      createdRecord = await runCreate(client);
+    } else {
+      createdRecord = await db.transaction(async tx => await runCreate(tx));
+    }
 
     // 5. Async: Sync to Google Sheets (non-blocking)
-    try {
-      // Fetch business to get spreadsheet ID
-      const [business] = await db
-        .select()
-        .from(businesses)
-        .where(eq(businesses.id, business_id))
-        .limit(1);
+    if (!trx) {
+      try {
+        // Fetch business to get spreadsheet ID
+        const [business] = await db
+          .select()
+          .from(businesses)
+          .where(eq(businesses.id, business_id))
+          .limit(1);
 
-      if (business?.google_sheets_enabled && business?.google_sheets_spreadsheet_id) {
-        // Fetch created record with items for sync
-        const recordWithItems = await getRecordById(business_id, createdRecord.id);
-        await syncRecordToGoogleSheets(
+        if (
+          business?.google_sheets_enabled &&
+          business?.google_sheets_spreadsheet_id
+        ) {
+          // Fetch created record with items for sync
+          const recordWithItems = await getRecordById(
+            business_id,
+            createdRecord.id
+          );
+          await syncRecordToGoogleSheets(
+            business_id,
+            business.google_sheets_spreadsheet_id,
+            recordWithItems
+          );
+
+          // Update sync status
+          await db
+            .update(records)
+            .set({
+              synced_to_sheets: true,
+              updated_at: new Date(),
+            })
+            .where(eq(records.id, createdRecord.id));
+        }
+      } catch (syncError) {
+        logger.error('Failed to sync record to Google Sheets', {
+          error: syncError.message,
+          record_id: createdRecord.id,
           business_id,
-          business.google_sheets_spreadsheet_id,
-          recordWithItems
-        );
+        });
 
-        // Update sync status
+        // Update sync error but don't fail the request
         await db
           .update(records)
           .set({
-            synced_to_sheets: true,
+            sheets_sync_error: syncError.message,
             updated_at: new Date(),
           })
           .where(eq(records.id, createdRecord.id));
       }
-    } catch (syncError) {
-      logger.error('Failed to sync record to Google Sheets', {
-        error: syncError.message,
-        record_id: createdRecord.id,
-        business_id,
-      });
-
-      // Update sync error but don't fail the request
-      await db
-        .update(records)
-        .set({
-          sheets_sync_error: syncError.message,
-          updated_at: new Date(),
-        })
-        .where(eq(records.id, createdRecord.id));
     }
 
     logger.info('Record created successfully', {
@@ -231,10 +255,7 @@ export async function getRecordById(business_id, record_id) {
       .select()
       .from(records)
       .where(
-        and(
-          eq(records.id, record_id),
-          eq(records.business_id, business_id)
-        )
+        and(eq(records.id, record_id), eq(records.business_id, business_id))
       );
 
     if (!record) {
@@ -286,30 +307,30 @@ export async function getRecords(
   } = {}
 ) {
   try {
-    let query = db
-      .select()
-      .from(records)
-      .where(eq(records.business_id, business_id));
+    const conditions = [eq(records.business_id, business_id)];
 
     // Apply filters
     if (type) {
-      query = query.where(eq(records.type, type));
+      conditions.push(eq(records.type, type));
     }
 
     if (payment_method) {
-      query = query.where(eq(records.payment_method, payment_method));
+      conditions.push(eq(records.payment_method, payment_method));
     }
 
     if (start_date) {
-      query = query.where(gte(records.transaction_date, new Date(start_date)));
+      conditions.push(gte(records.transaction_date, new Date(start_date)));
     }
 
     if (end_date) {
-      query = query.where(lte(records.transaction_date, new Date(end_date)));
+      conditions.push(lte(records.transaction_date, new Date(end_date)));
     }
 
     // Order by date descending and apply pagination
-    const result = await query
+    const result = await db
+      .select()
+      .from(records)
+      .where(and(...conditions))
       .orderBy(desc(records.transaction_date))
       .limit(limit)
       .offset(offset);
@@ -415,7 +436,10 @@ export async function calculateTotals(
           totals.higher_purchase += amount;
           break;
         case 'credit':
-          if (record.credit_status === 'pending' || record.credit_status === 'partial') {
+          if (
+            record.credit_status === 'pending' ||
+            record.credit_status === 'partial'
+          ) {
             totals.credit_given += amount;
           } else {
             totals.credit_recovered += amount;
@@ -460,10 +484,7 @@ export async function calculateTotals(
  * @param {string} mpesa_transaction_id - M-Pesa transaction ID
  * @returns {Promise<Object>} Updated record
  */
-export async function processM2PesaCallback(
-  business_id,
-  mpesa_transaction_id
-) {
+export async function processM2PesaCallback(business_id, mpesa_transaction_id) {
   try {
     const [record] = await db
       .select()

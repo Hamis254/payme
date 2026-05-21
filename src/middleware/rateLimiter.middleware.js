@@ -205,7 +205,9 @@ export const createDistributedRateLimiter = async (_options = {}) => {
   // const redis = require('redis').createClient();
   // Key pattern: payme:ratelimit:${endpoint}:${ip}:${timestamp}
   // Use Redis INCR with EX for atomic operations across servers
-  throw new Error('Distributed rate limiter not yet implemented. Use Redis backend.');
+  throw new Error(
+    'Distributed rate limiter not yet implemented. Use Redis backend.'
+  );
 };
 
 /**

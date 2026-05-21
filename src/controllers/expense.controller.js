@@ -189,7 +189,11 @@ export async function getExpenseAnalyticsHandler(req, res, next) {
 
     switch (analysisType) {
       case 'summary':
-        analytics.summary = await getExpenseSummary(businessId, startDate, endDate);
+        analytics.summary = await getExpenseSummary(
+          businessId,
+          startDate,
+          endDate
+        );
         break;
 
       case 'by_category':

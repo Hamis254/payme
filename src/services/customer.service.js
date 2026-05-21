@@ -389,8 +389,12 @@ export async function updatePreferences(customerId, businessId, data) {
  * @returns {object} { sales, total, summary }
  */
 export async function getPurchaseHistory(customerId, businessId, options = {}) {
-  const { limit = 10, offset = 0, start_date = null, end_date = null } =
-    options;
+  const {
+    limit = 10,
+    offset = 0,
+    start_date = null,
+    end_date = null,
+  } = options;
 
   // Verify customer exists
   const [customer] = await db
@@ -407,10 +411,7 @@ export async function getPurchaseHistory(customerId, businessId, options = {}) {
 
   // Build conditions
   const conditions = [
-    and(
-      eq(sales.business_id, businessId),
-      eq(sales.customer_id, customerId)
-    ),
+    and(eq(sales.business_id, businessId), eq(sales.customer_id, customerId)),
   ];
 
   if (start_date) {
@@ -622,7 +623,8 @@ export async function updatePurchaseHistory(customerId, saleData) {
     parseFloat(saleData.total_amount || 0);
   const avgValue = newSpent / newTotal;
   const isRepeat = newTotal >= 2;
-  const itemsCount = (currentHistory.total_items_bought || 0) + (saleData.items_count || 0);
+  const itemsCount =
+    (currentHistory.total_items_bought || 0) + (saleData.items_count || 0);
 
   // Determine repeat frequency
   let repeatFrequency = 'one_time';

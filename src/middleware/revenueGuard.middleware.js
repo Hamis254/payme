@@ -5,7 +5,7 @@
  * CORE RESPONSIBILITY:
  * This middleware acts as the primary revenue enforcement layer for the Pay Me
  * ecosystem. It ensures that no billable business logic (Sales, Credit,
- * Higher Purchase, or Records) is executed unless the merchant has a
+ * Higher Purchase, or Expense. In short any record to be kept) is executed unless the merchant has a
  * pre-paid Token Balance (1 Token = 2 KES).
  *
  * ARCHITECTURAL PRINCIPLES:
@@ -80,7 +80,7 @@ const REVENUE_GUARD_CONFIG = {
  * Log all revenue guard interactions for audit trails
  * Critical for Kenyan financial regulations and dispute resolution
  */
-const logAuditEvent = async (event) => {
+const logAuditEvent = async event => {
   try {
     const auditEntry = {
       timestamp: new Date(),
@@ -125,7 +125,7 @@ const logAuditEvent = async (event) => {
  * Calculate risk score based on multiple factors
  * Higher score = higher fraud likelihood
  */
-const calculateRiskScore = async (userId, businessId, amount = 1) => {
+const calculateRiskScore = async (businessId, amount = 1) => {
   try {
     let riskScore = 0;
 
@@ -135,15 +135,17 @@ const calculateRiskScore = async (userId, businessId, amount = 1) => {
       .from(walletTransactions)
       .where(
         and(
-          eq(walletTransactions.user_id, userId),
+          eq(walletTransactions.business_id, businessId),
           sql`created_at > NOW() - INTERVAL '1 minute'`
         )
       );
 
-    if (recentOps[0].count >= REVENUE_GUARD_CONFIG.SUSPICIOUS_PATTERN_THRESHOLD) {
+    if (
+      recentOps[0].count >= REVENUE_GUARD_CONFIG.SUSPICIOUS_PATTERN_THRESHOLD
+    ) {
       riskScore += 25; // High velocity = suspicious
       logger.warn('FRAUD_ALERT: Velocity spike detected', {
-        user_id: userId,
+        business_id: businessId,
         operations_in_60s: recentOps[0].count,
       });
     }
@@ -162,18 +164,21 @@ const calculateRiskScore = async (userId, businessId, amount = 1) => {
 
     // 5. Amount anomaly check
     const avgTransaction = await db
-      .select({ avg: sql`avg(cast(amount_tokens as decimal))::numeric` })
+      .select({
+        avg: sql`avg(abs(${walletTransactions.change_tokens}))::numeric`,
+      })
       .from(walletTransactions)
       .where(
         and(
-          eq(walletTransactions.user_id, userId),
+          eq(walletTransactions.business_id, businessId),
           sql`created_at > NOW() - INTERVAL '7 days'`
         )
       );
 
     if (
       avgTransaction[0].avg &&
-      amount > avgTransaction[0].avg * REVENUE_GUARD_CONFIG.ANOMALY_AMOUNT_MULTIPLIER
+      amount >
+        avgTransaction[0].avg * REVENUE_GUARD_CONFIG.ANOMALY_AMOUNT_MULTIPLIER
     ) {
       riskScore += 20; // Amount exceeds typical pattern
     }
@@ -184,7 +189,7 @@ const calculateRiskScore = async (userId, businessId, amount = 1) => {
       .from(walletTransactions)
       .where(
         and(
-          eq(walletTransactions.user_id, userId),
+          eq(walletTransactions.business_id, businessId),
           sql`created_at > NOW() - INTERVAL '1 day'`
         )
       );
@@ -195,7 +200,7 @@ const calculateRiskScore = async (userId, businessId, amount = 1) => {
         sql`
           (SELECT DATE(created_at), count(*) as daily_count
            FROM wallet_transactions
-           WHERE user_id = ${userId}
+           WHERE business_id = ${businessId}
            AND created_at > NOW() - INTERVAL '30 days'
            GROUP BY DATE(created_at)) as daily_stats
         `
@@ -219,7 +224,7 @@ const calculateRiskScore = async (userId, businessId, amount = 1) => {
 /**
  * Check if user is rate limited
  */
-const checkRateLimit = async (userId) => {
+const checkRateLimit = async businessId => {
   try {
     // Per-minute check
     const minuteOps = await db
@@ -227,7 +232,7 @@ const checkRateLimit = async (userId) => {
       .from(walletTransactions)
       .where(
         and(
-          eq(walletTransactions.user_id, userId),
+          eq(walletTransactions.business_id, businessId),
           sql`created_at > NOW() - INTERVAL '1 minute'`
         )
       );
@@ -247,7 +252,7 @@ const checkRateLimit = async (userId) => {
       .from(walletTransactions)
       .where(
         and(
-          eq(walletTransactions.user_id, userId),
+          eq(walletTransactions.business_id, businessId),
           sql`created_at > NOW() - INTERVAL '1 hour'`
         )
       );
@@ -290,7 +295,8 @@ export const revenueGuard = async (req, res, next) => {
     }
 
     // 2. EXTRACT BUSINESS ID
-    const businessId = req.body.business_id || req.params.businessId;
+    const businessId =
+      req.body.businessId || req.body.business_id || req.params.businessId;
     if (!businessId) {
       return res.status(400).json({
         error: 'Business ID required',
@@ -303,10 +309,7 @@ export const revenueGuard = async (req, res, next) => {
       .select()
       .from(businesses)
       .where(
-        and(
-          eq(businesses.id, businessId),
-          eq(businesses.user_id, req.user.id)
-        )
+        and(eq(businesses.id, businessId), eq(businesses.user_id, req.user.id))
       )
       .limit(1);
 
@@ -324,7 +327,7 @@ export const revenueGuard = async (req, res, next) => {
     }
 
     // 4. RATE LIMIT CHECK
-    const rateLimitCheck = await checkRateLimit(req.user.id);
+    const rateLimitCheck = await checkRateLimit(Number(businessId));
     if (rateLimitCheck.limited) {
       logger.warn('RATE_LIMIT_EXCEEDED', {
         user_id: req.user.id,
@@ -375,8 +378,7 @@ export const revenueGuard = async (req, res, next) => {
 
     // 6. CALCULATE RISK SCORE
     const riskScore = await calculateRiskScore(
-      req.user.id,
-      businessId,
+      Number(businessId),
       REVENUE_GUARD_CONFIG.TOKENS_PER_BILLABLE_OPERATION
     );
 
@@ -411,8 +413,7 @@ export const revenueGuard = async (req, res, next) => {
 
     // 8. CHECK TOKEN BALANCE
     const balanceBefore = Number(wallet.balance_tokens) || 0;
-    const requiredTokens =
-      REVENUE_GUARD_CONFIG.TOKENS_PER_BILLABLE_OPERATION;
+    const requiredTokens = REVENUE_GUARD_CONFIG.TOKENS_PER_BILLABLE_OPERATION;
 
     if (balanceBefore < requiredTokens) {
       logger.warn('INSUFFICIENT_BALANCE', {
@@ -465,10 +466,7 @@ export const revenueGuard = async (req, res, next) => {
       );
       res.set('X-Token-Warning-Level', 'critical');
     } else if (balanceBefore < REVENUE_GUARD_CONFIG.LOW_BALANCE_WARNING) {
-      res.set(
-        'X-Token-Low-Warning',
-        `Only ${balanceBefore} tokens remaining`
-      );
+      res.set('X-Token-Low-Warning', `Only ${balanceBefore} tokens remaining`);
       res.set('X-Token-Warning-Level', 'low');
     }
 
@@ -516,7 +514,7 @@ export const deductTokens = async (walletId, tokensToDeduct, metadata = {}) => {
   const deductionId = crypto.randomUUID();
 
   try {
-    const result = await db.transaction(async (tx) => {
+    const result = await db.transaction(async tx => {
       // 1. Lock and fetch current balance
       const [currentWallet] = await tx
         .select()
@@ -539,7 +537,7 @@ export const deductTokens = async (walletId, tokensToDeduct, metadata = {}) => {
       await tx
         .update(wallets)
         .set({
-          balance_tokens: String(balanceAfter),
+          balance_tokens: balanceAfter,
           updated_at: new Date(),
         })
         .where(eq(wallets.id, walletId))
@@ -547,14 +545,15 @@ export const deductTokens = async (walletId, tokensToDeduct, metadata = {}) => {
 
       // 3. Log transaction
       await tx.insert(walletTransactions).values({
-        wallet_id: walletId,
-        transaction_type: 'deduction',
-        amount_tokens: String(tokensToDeduct),
-        balance_before: String(balanceBefore),
-        balance_after: String(balanceAfter),
-        status: 'completed',
-        metadata: JSON.stringify(metadata),
+        business_id: currentWallet.business_id,
+        change_tokens: -tokensToDeduct,
+        type: 'charge',
+        reference: metadata.reference || String(deductionId),
+        note:
+          metadata.note ||
+          `Revenue guard deduction (${tokensToDeduct} token${tokensToDeduct === 1 ? '' : 's'})`,
         created_at: new Date(),
+        created_by: null,
       });
 
       return {
@@ -596,7 +595,7 @@ export const deductTokens = async (walletId, tokensToDeduct, metadata = {}) => {
  */
 export const refundTokens = async (walletId, tokensToRefund, reason = '') => {
   try {
-    const result = await db.transaction(async (tx) => {
+    const result = await db.transaction(async tx => {
       // Fetch current balance
       const [currentWallet] = await tx
         .select()
@@ -615,7 +614,7 @@ export const refundTokens = async (walletId, tokensToRefund, reason = '') => {
       await tx
         .update(wallets)
         .set({
-          balance_tokens: String(balanceAfter),
+          balance_tokens: balanceAfter,
           updated_at: new Date(),
         })
         .where(eq(wallets.id, walletId))
@@ -623,14 +622,13 @@ export const refundTokens = async (walletId, tokensToRefund, reason = '') => {
 
       // Log refund
       await tx.insert(walletTransactions).values({
-        wallet_id: walletId,
-        transaction_type: 'refund',
-        amount_tokens: String(tokensToRefund),
-        balance_before: String(balanceBefore),
-        balance_after: String(balanceAfter),
-        status: 'completed',
-        metadata: JSON.stringify({ reason }),
+        business_id: currentWallet.business_id,
+        change_tokens: tokensToRefund,
+        type: 'refund',
+        reference: null,
+        note: reason || 'Revenue guard refund',
         created_at: new Date(),
+        created_by: null,
       });
 
       return {

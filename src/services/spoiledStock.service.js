@@ -10,11 +10,8 @@
 
 import logger from '#config/logger.js';
 import { db, sql } from '#config/database.js';
-import { eq, and, desc, gte } from 'drizzle-orm';
-import {
-  spoiledStock,
-  SPOILAGE_TYPES,
-} from '#models/spoiledStock.model.js';
+import { eq, and, desc, gte, lte } from 'drizzle-orm';
+import { spoiledStock, SPOILAGE_TYPES } from '#models/spoiledStock.model.js';
 import { products } from '#models/stock.model.js';
 import { stockMovements } from '#models/stock.model.js';
 
@@ -57,7 +54,9 @@ export const recordSpoilage = async (
     const [product] = await db
       .select()
       .from(products)
-      .where(and(eq(products.id, productId), eq(products.business_id, businessId)))
+      .where(
+        and(eq(products.id, productId), eq(products.business_id, businessId))
+      )
       .limit(1);
 
     if (!product) {
@@ -160,7 +159,10 @@ export const getSpoilageById = async (businessId, spoilageId) => {
     .from(spoiledStock)
     .leftJoin(products, eq(spoiledStock.product_id, products.id))
     .where(
-      and(eq(spoiledStock.id, spoilageId), eq(spoiledStock.business_id, businessId))
+      and(
+        eq(spoiledStock.id, spoilageId),
+        eq(spoiledStock.business_id, businessId)
+      )
     )
     .limit(1);
 
@@ -225,7 +227,7 @@ export const listSpoilageRecords = async (
   }
 
   if (endDate) {
-    query = query.where(gte(spoiledStock.created_at, endDate));
+    query = query.where(lte(spoiledStock.created_at, endDate));
   }
 
   const records = await query
@@ -250,12 +252,14 @@ export const getSpoilageSummary = async businessId => {
   const [summary] = await db
     .select({
       total_incidents: sql`COUNT(*)`.mapWith(Number),
-      total_quantity: sql`SUM(CAST(${spoiledStock.quantity_spoiled} AS DECIMAL))`.mapWith(
-        Number
-      ),
-      total_loss_value: sql`SUM(CAST(${spoiledStock.total_loss_value} AS DECIMAL))`.mapWith(
-        Number
-      ),
+      total_quantity:
+        sql`SUM(CAST(${spoiledStock.quantity_spoiled} AS DECIMAL))`.mapWith(
+          Number
+        ),
+      total_loss_value:
+        sql`SUM(CAST(${spoiledStock.total_loss_value} AS DECIMAL))`.mapWith(
+          Number
+        ),
     })
     .from(spoiledStock)
     .where(eq(spoiledStock.business_id, businessId));
@@ -275,7 +279,7 @@ export const getSpoilageSummary = async businessId => {
  * @returns {Promise<Array>} Array of {type, count, quantity, loss_value}
  */
 export const getSpoilageByType = async businessId => {
-  const result = await db.run(
+  const result = await db.execute(
     sql`
       SELECT 
         spoilage_type,
@@ -301,7 +305,7 @@ export const getSpoilageByType = async businessId => {
  * @returns {Promise<Array>} Top spoiled products
  */
 export const getTopSpoiledProducts = async (businessId, limit = 10) => {
-  const result = await db.run(
+  const result = await db.execute(
     sql`
       SELECT 
         p.id,
@@ -330,7 +334,7 @@ export const getTopSpoiledProducts = async (businessId, limit = 10) => {
  * @returns {Promise<Array>} Products with highest losses
  */
 export const getHighestLossProducts = async (businessId, limit = 10) => {
-  const result = await db.run(
+  const result = await db.execute(
     sql`
       SELECT 
         p.id,
@@ -358,7 +362,7 @@ export const getHighestLossProducts = async (businessId, limit = 10) => {
  * @returns {Promise<Array>} Monthly breakdown
  */
 export const getMonthlySpoilageTrend = async businessId => {
-  const result = await db.run(
+  const result = await db.execute(
     sql`
       SELECT 
         DATE_TRUNC('month', created_at) as month,
@@ -384,8 +388,11 @@ export const getMonthlySpoilageTrend = async businessId => {
  * @param {number} [limit=10]
  * @returns {Promise<Array>} Products with highest spoilage rates
  */
-export const getHighestSpoilageRateProducts = async (businessId, limit = 10) => {
-  const result = await db.run(
+export const getHighestSpoilageRateProducts = async (
+  businessId,
+  limit = 10
+) => {
+  const result = await db.execute(
     sql`
       SELECT 
         p.id,
@@ -425,7 +432,10 @@ export const updateSpoilageRecord = async (businessId, spoilageId, updates) => {
     .select()
     .from(spoiledStock)
     .where(
-      and(eq(spoiledStock.id, spoilageId), eq(spoiledStock.business_id, businessId))
+      and(
+        eq(spoiledStock.id, spoilageId),
+        eq(spoiledStock.business_id, businessId)
+      )
     )
     .limit(1);
 
@@ -457,7 +467,10 @@ export const deleteSpoilageRecord = async (businessId, spoilageId) => {
     .select()
     .from(spoiledStock)
     .where(
-      and(eq(spoiledStock.id, spoilageId), eq(spoiledStock.business_id, businessId))
+      and(
+        eq(spoiledStock.id, spoilageId),
+        eq(spoiledStock.business_id, businessId)
+      )
     )
     .limit(1);
 
@@ -468,9 +481,7 @@ export const deleteSpoilageRecord = async (businessId, spoilageId) => {
   // Atomic transaction: delete spoilage and restore stock
   await db.transaction(async tx => {
     // Delete spoilage record
-    await tx
-      .delete(spoiledStock)
-      .where(eq(spoiledStock.id, spoilageId));
+    await tx.delete(spoiledStock).where(eq(spoiledStock.id, spoilageId));
 
     // Restore stock quantity
     const [product] = await tx

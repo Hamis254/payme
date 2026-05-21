@@ -111,7 +111,10 @@ export const initiateTokenPurchaseHandler = async (req, res, next) => {
     });
   } catch (e) {
     logger.error('Initiate token purchase failed', e);
-    if (e.message.includes('not found') || e.message.includes('access denied')) {
+    if (
+      e.message.includes('not found') ||
+      e.message.includes('access denied')
+    ) {
       return res.status(403).json({ error: e.message });
     }
     if (e.message.includes('Invalid')) {

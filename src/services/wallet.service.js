@@ -168,8 +168,8 @@ export const processTokenPurchaseCallback = async callbackData => {
         return;
       }
 
-      // Idempotency check: if already processed, skip
-      if (purchase.callback_processed) {
+      // Idempotency check: if already finalized, skip
+      if (purchase.status === 'success' || purchase.status === 'failed') {
         logger.info('Token purchase callback already processed, skipping', {
           callbackId,
           purchaseId: purchase.id,
@@ -203,7 +203,6 @@ export const processTokenPurchaseCallback = async callbackData => {
             status: 'success',
             mpesa_transaction_id: mpesaReceiptNumber,
             mpesa_phone: phoneNumber || purchase.mpesa_phone,
-            callback_processed: true,
             callback_payload: JSON.stringify(callbackData),
             completed_at: new Date(),
           })
@@ -263,7 +262,6 @@ export const processTokenPurchaseCallback = async callbackData => {
           .update(tokenPurchases)
           .set({
             status: 'failed',
-            callback_processed: true,
             callback_payload: JSON.stringify(callbackData),
           })
           .where(eq(tokenPurchases.id, purchase.id));
@@ -567,7 +565,7 @@ export const TOKEN_PACKAGES = [
 
 export const getTokenPackages = () => TOKEN_PACKAGES;
 
-export const calculatePackagePrice = (tokens) => {
+export const calculatePackagePrice = tokens => {
   const pkg = TOKEN_PACKAGES.find(p => p.tokens === tokens);
   return pkg ? pkg.price : tokens * 2; // Default: 2 KSH per token
 };

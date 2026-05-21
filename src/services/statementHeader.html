@@ -1,142 +1,382 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>Financial Statement</title>
-  <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>PayMe Financial Statement — {{business_name}}</title>
+    <style>
+      /* ─── A4 PAGE SETUP ─── */
+      @page {
+        size: A4 portrait;
+        margin: 18mm 15mm 22mm 15mm;
+        @bottom-center {
+          content: 'Page ' counter(page) ' of ' counter(pages);
+          font-size: 8pt;
+          color: #888;
+          font-family: 'Segoe UI', sans-serif;
+        }
+      }
 
-    body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      font-size: 11px;
-      line-height: 1.4;
-      color: #333;
-    }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
 
-    .statement-header {
-      border-bottom: 3px solid #1a472a;
-      padding-bottom: 15px;
-      margin-bottom: 20px;
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-    }
+      body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        font-size: 10pt;
+        line-height: 1.5;
+        color: #1a1a1a;
+        background: #fff;
+      }
 
-    .header-left {
-      flex: 1;
-    }
+      /* ─── WATERMARK STAMP ─── */
+      body::before {
+        content: 'VERIFIED BY PAYME';
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%) rotate(-35deg);
+        font-size: 72pt;
+        font-weight: 900;
+        color: rgba(5, 77, 50, 0.045);
+        letter-spacing: 4px;
+        white-space: nowrap;
+        pointer-events: none;
+        z-index: 0;
+      }
 
-    .logo-container {
-      text-align: center;
-      margin-bottom: 15px;
-      padding: 10px;
-      background: linear-gradient(135deg, #1a472a 0%, #2d5a3d 100%);
-      border-radius: 8px;
-      color: white;
-    }
+      /* ─── DIGITAL CORNER STAMP ─── */
+      .digital-stamp {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 110px;
+        height: 110px;
+      }
 
-    .logo-text {
-      font-size: 24px;
-      font-weight: bold;
-      letter-spacing: 2px;
-    }
+      .stamp-outer {
+        width: 110px;
+        height: 110px;
+        border: 3px solid #054d32;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+      }
 
-    .company-name {
-      font-size: 18px;
-      font-weight: bold;
-      color: #1a472a;
-      margin-bottom: 5px;
-    }
+      .stamp-inner {
+        width: 88px;
+        height: 88px;
+        border: 1.5px dashed #054d32;
+        border-radius: 50%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 6px;
+      }
 
-    .company-details {
-      font-size: 10px;
-      color: #666;
-      line-height: 1.5;
-    }
+      .stamp-top {
+        font-size: 6pt;
+        font-weight: 800;
+        letter-spacing: 1.5px;
+        color: #054d32;
+        text-transform: uppercase;
+      }
 
-    .header-right {
-      text-align: right;
-      min-width: 200px;
-    }
+      .stamp-logo {
+        font-size: 13pt;
+        font-weight: 900;
+        color: #054d32;
+        letter-spacing: 2px;
+        margin: 2px 0;
+      }
 
-    .statement-title {
-      font-size: 16px;
-      font-weight: bold;
-      color: #1a472a;
-      margin-bottom: 10px;
-    }
+      .stamp-code {
+        font-size: 5pt;
+        font-family: monospace;
+        color: #054d32;
+        word-break: break-all;
+        text-align: center;
+      }
 
-    .statement-period {
-      font-size: 11px;
-      color: #555;
-      margin-bottom: 5px;
-    }
+      /* ─── HEADER LAYOUT ─── */
+      .header-wrap {
+        position: relative;
+        border-bottom: 3px solid #054d32;
+        padding-bottom: 14px;
+        margin-bottom: 16px;
+      }
 
-    .generated-date {
-      font-size: 10px;
-      color: #888;
-    }
+      .header-top {
+        display: table;
+        width: 100%;
+      }
 
-    .merchant-details {
-      font-size: 13px;
-      color: #333;
-      line-height: 1.6;
-      margin-top: 15px;
-      padding: 10px;
-      background-color: #f9f9f9;
-      border-radius: 5px;
-    }
+      .header-top-left {
+        display: table-cell;
+        vertical-align: top;
+        width: 55%;
+      }
 
-    .merchant-details p {
-      margin: 2px 0;
-    }
+      .header-top-right {
+        display: table-cell;
+        vertical-align: top;
+        text-align: right;
+        width: 45%;
+      }
 
-    .report-period {
-      margin-top: 10px;
-      font-weight: bold;
-      color: #555;
-      font-size: 14px;
-      text-decoration: underline;
-    }
-  </style>
-</head>
-<body>
-  <div class="statement-header">
-    <div class="header-left">
-      <div class="logo-container">
-        <div class="logo-text">PAYME</div>
+      .payme-badge {
+        display: inline-block;
+        background: linear-gradient(135deg, #054d32 0%, #0a7a4e 100%);
+        color: #fff;
+        padding: 6px 18px;
+        border-radius: 4px;
+        font-size: 18pt;
+        font-weight: 900;
+        letter-spacing: 4px;
+        margin-bottom: 8px;
+      }
+
+      .payme-tagline {
+        font-size: 7.5pt;
+        color: #666;
+        letter-spacing: 1px;
+        margin-bottom: 10px;
+      }
+
+      .business-name {
+        font-size: 14pt;
+        font-weight: 800;
+        color: #054d32;
+        margin-bottom: 3px;
+      }
+
+      .business-meta {
+        font-size: 8.5pt;
+        color: #555;
+        line-height: 1.7;
+      }
+
+      .statement-label {
+        font-size: 15pt;
+        font-weight: 800;
+        color: #054d32;
+        letter-spacing: 1px;
+        margin-bottom: 6px;
+      }
+
+      .statement-ref {
+        font-size: 7.5pt;
+        color: #777;
+        margin-bottom: 4px;
+      }
+
+      .statement-period-badge {
+        display: inline-block;
+        background: #e8f5e9;
+        border: 1px solid #054d32;
+        border-radius: 3px;
+        padding: 4px 10px;
+        font-size: 8pt;
+        font-weight: 700;
+        color: #054d32;
+        margin-top: 6px;
+      }
+
+      /* ─── MERCHANT INFO BOX ─── */
+      .merchant-box {
+        display: table;
+        width: 100%;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background: #f9f9f9;
+        margin-bottom: 16px;
+      }
+
+      .merchant-col {
+        display: table-cell;
+        vertical-align: top;
+        padding: 10px 14px;
+        width: 50%;
+        font-size: 8.5pt;
+        line-height: 1.8;
+        border-right: 1px solid #e0e0e0;
+      }
+
+      .merchant-col:last-child {
+        border-right: none;
+      }
+
+      .merchant-col strong {
+        color: #054d32;
+      }
+
+      /* ─── SECTION HEADING ─── */
+      .section-title {
+        font-size: 9pt;
+        font-weight: 800;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        padding: 6px 10px;
+        border-radius: 3px;
+        margin-bottom: 8px;
+      }
+
+      .section-title.green {
+        color: #054d32;
+        background: #e8f5e9;
+        border-left: 4px solid #054d32;
+      }
+
+      .section-title.red {
+        color: #b71c1c;
+        background: #fff5f5;
+        border-left: 4px solid #c62828;
+      }
+
+      .section-title.dark {
+        color: #1a1a1a;
+        background: #f3f3f3;
+        border-left: 4px solid #333;
+      }
+
+      /* ─── TABLES ─── */
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 9pt;
+        margin-bottom: 18px;
+      }
+
+      th {
+        background: #054d32;
+        color: #fff;
+        padding: 8px 9px;
+        text-align: left;
+        font-size: 8pt;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+      }
+
+      th.right,
+      td.right {
+        text-align: right;
+      }
+
+      th.center,
+      td.center {
+        text-align: center;
+      }
+
+      td {
+        padding: 7px 9px;
+        border-bottom: 1px solid #ebebeb;
+        vertical-align: top;
+        color: #333;
+      }
+
+      tr:nth-child(even) td {
+        background: #f9fcf9;
+      }
+
+      tr.subtotal td {
+        font-weight: 700;
+        background: #f2f2f2 !important;
+        border-top: 1.5px solid #ccc;
+        border-bottom: 1.5px solid #ccc;
+      }
+
+      tr.total-green td {
+        font-weight: 900;
+        background: #e8f5e9 !important;
+        color: #054d32;
+        font-size: 10pt;
+        border: 1.5px solid #054d32;
+      }
+
+      tr.total-red td {
+        font-weight: 900;
+        background: #fff5f5 !important;
+        color: #b71c1c;
+        border: 1.5px solid #c62828;
+      }
+
+      tr.total-net td {
+        font-weight: 900;
+        background: #054d32 !important;
+        color: #fff;
+        font-size: 11pt;
+        border: 2px solid #054d32;
+      }
+
+      td.mono {
+        font-family: 'Courier New', monospace;
+        font-size: 8pt;
+      }
+
+      /* ─── PAGE BREAK ─── */
+      .page-break {
+        page-break-before: always;
+      }
+
+      .no-break {
+        page-break-inside: avoid;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- HEADER -->
+    <div class="header-wrap">
+      <div class="digital-stamp">
+        <div class="stamp-outer">
+          <div class="stamp-inner">
+            <div class="stamp-top">DIGITALLY</div>
+            <div class="stamp-logo">PAYME</div>
+            <div class="stamp-top">VERIFIED</div>
+            <div class="stamp-code">{{verification_code}}</div>
+          </div>
+        </div>
       </div>
-      <div class="company-name">{{business_name}}</div>
-      <div class="company-details">
-        {{location}}<br>
-        {{phone}}<br>
-        {{email}}<br>
-        {{address}}
+
+      <div class="header-top">
+        <div class="header-top-left">
+          <div class="payme-badge">PAYME</div>
+          <div class="payme-tagline">BUSINESS FINANCIAL MANAGEMENT SYSTEM</div>
+          <div class="business-name">{{business_name}}</div>
+          <div class="business-meta">
+            {{location}}<br />
+            Tel: {{phone_number}} &nbsp;|&nbsp; {{email}}
+          </div>
+        </div>
+        <div class="header-top-right">
+          <div class="statement-label">FINANCIAL STATEMENT</div>
+          <div class="statement-ref">Ref: {{verification_code}}</div>
+          <div class="statement-ref">Generated: {{generated_date}}</div>
+          <div class="statement-period-badge">
+            {{statement_start_date}} &rarr; {{statement_end_date}}
+          </div>
+        </div>
       </div>
     </div>
-    <div class="header-right">
-      <div class="statement-title">FINANCIAL STATEMENT</div>
-      <div class="statement-period">
-        Period: {{statement_start_date}} to {{statement_end_date}}
+
+    <!-- MERCHANT INFO -->
+    <div class="merchant-box">
+      <div class="merchant-col">
+        <strong>BUSINESS NAME:</strong> {{business_name}}<br />
+        <strong>OWNER / OPERATOR:</strong> {{owner_name}}<br />
+        <strong>LOCATION:</strong> {{location}}<br />
+        <strong>ADDRESS:</strong> {{address}}
       </div>
-      <div class="generated-date">
-        Generated: {{generated_date}}
+      <div class="merchant-col">
+        <strong>PHONE:</strong> {{phone_number}}<br />
+        <strong>EMAIL:</strong> {{email}}<br />
+        <strong>STATEMENT PERIOD:</strong> {{start_date}} to {{end_date}}<br />
+        <strong>RECORDS COUNT:</strong> {{record_count}} transactions
       </div>
     </div>
-  </div>
-  <div class="merchant-details">
-    <p><strong>CUSTOMER NAME:</strong> {{owner_name}}</p>
-    <p><strong>BUSINESS NAME:</strong> {{business_name}}</p>
-    <p><strong>LOCATION:</strong> {{location}}</p>
-    <p><strong>PHONE NUMBER:</strong> {{phone_number}} | <strong>EMAIL:</strong> {{email}}</p>
-    <p><strong>DATE OF EXPORT:</strong> {{current_date}}</p>
-  </div>
-  <div class="report-period">
-    SALES REPORT FROM {{start_date}} TO {{end_date}}
-  </div>
-</body>
+  </body>
 </html>

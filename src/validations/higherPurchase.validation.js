@@ -10,10 +10,10 @@ export const createHirePurchaseSchema = z.object({
   installmentAmount: z.number().positive(),
   installmentFrequency: z.enum(['daily', 'weekly', 'bi-weekly', 'monthly']),
   numberOfInstallments: z.number().int().positive(),
-  agreementDate: z.string().refine((s) => !Number.isNaN(Date.parse(s)), {
+  agreementDate: z.string().refine(s => !Number.isNaN(Date.parse(s)), {
     message: 'Invalid date',
   }),
-  firstPaymentDate: z.string().refine((s) => !Number.isNaN(Date.parse(s)), {
+  firstPaymentDate: z.string().refine(s => !Number.isNaN(Date.parse(s)), {
     message: 'Invalid date',
   }),
   lateFeeAmount: z.number().nonnegative().optional().default(0),
@@ -31,7 +31,7 @@ export const recordInstallmentPaymentSchema = z.object({
   mpesaTransactionId: z.string().optional(),
   paymentDate: z
     .string()
-    .refine((s) => !Number.isNaN(Date.parse(s)), {
+    .refine(s => !Number.isNaN(Date.parse(s)), {
       message: 'Invalid date',
     })
     .optional(),

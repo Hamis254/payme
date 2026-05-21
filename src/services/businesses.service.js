@@ -1,37 +1,52 @@
 import logger from '#config/logger.js';
 import { db } from '#config/database.js';
 import { businesses } from '#models/setting.model.js';
-import { eq } from 'drizzle-orm';
+import { wallets } from '#models/myWallet.model.js';
+import { and, eq } from 'drizzle-orm';
 
 export const createBusinessForUser = async (userId, data) => {
   try {
-    const [business] = await db
-      .insert(businesses)
-      .values({
-        user_id: userId,
-        name: data.name,
-        location: data.location,
-        location_description: data.location_description,
-        payment_method: data.payment_method,
-        payment_identifier: data.payment_identifier,
-      })
-      .returning({
-        id: businesses.id,
-        user_id: businesses.user_id,
-        name: businesses.name,
-        location: businesses.location,
-        location_description: businesses.location_description,
-        payment_method: businesses.payment_method,
-        payment_identifier: businesses.payment_identifier,
-        verified: businesses.verified,
-        created_at: businesses.created_at,
-        updated_at: businesses.updated_at,
+    const business = await db.transaction(async tx => {
+      // Step 1: Create the business
+      const [newBusiness] = await tx
+        .insert(businesses)
+        .values({
+          user_id: userId,
+          name: data.name,
+          location: data.location,
+          location_description: data.location_description,
+          payment_method: data.payment_method,
+          payment_identifier: data.payment_identifier,
+        })
+        .returning({
+          id: businesses.id,
+          user_id: businesses.user_id,
+          name: businesses.name,
+          location: businesses.location,
+          location_description: businesses.location_description,
+          payment_method: businesses.payment_method,
+          payment_identifier: businesses.payment_identifier,
+          verified: businesses.verified,
+          created_at: businesses.created_at,
+          updated_at: businesses.updated_at,
+        });
+
+      // Step 2: Create the wallet for this business (starts at 0 tokens)
+      await tx.insert(wallets).values({
+        business_id: newBusiness.id,
+        balance_tokens: 0,
       });
 
-    logger.info(`Business ${business.name} created for user ${userId}`);
+      logger.info(
+        `Business "${newBusiness.name}" and wallet created for user ${userId}`
+      );
+
+      return newBusiness;
+    });
+
     return business;
   } catch (e) {
-    logger.error('Error creating business', e);
+    logger.error('Error creating business and wallet', e);
     throw e;
   }
 };
@@ -75,8 +90,7 @@ export const getBusinessByIdForUser = async (userId, businessId) => {
         updated_at: businesses.updated_at,
       })
       .from(businesses)
-      .where(eq(businesses.id, businessId))
-      .where(eq(businesses.user_id, userId))
+      .where(and(eq(businesses.id, businessId), eq(businesses.user_id, userId)))
       .limit(1);
 
     if (!business) throw new Error('Business not found');
@@ -90,7 +104,6 @@ export const getBusinessByIdForUser = async (userId, businessId) => {
 
 export const updateBusinessForUser = async (userId, businessId, updates) => {
   try {
-    // Ensure the business belongs to the user
     await getBusinessByIdForUser(userId, businessId);
 
     const [updated] = await db
@@ -99,8 +112,7 @@ export const updateBusinessForUser = async (userId, businessId, updates) => {
         ...updates,
         updated_at: new Date(),
       })
-      .where(eq(businesses.id, businessId))
-      .where(eq(businesses.user_id, userId))
+      .where(and(eq(businesses.id, businessId), eq(businesses.user_id, userId)))
       .returning({
         id: businesses.id,
         user_id: businesses.user_id,

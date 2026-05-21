@@ -4,19 +4,19 @@
  * =============================================================================
  * * [1] CORE RESPONSIBILITY:
  * This model serves as the single source of truth for every billable event.
- * It governs the structure for Daily Reports, Higher Purchase, Credit, 
+ * It governs the structure for Daily Reports, Higher Purchase, Credit,
  * Inventory, and Expenses, providing the data for bank-grade credit scoring.
  *
  * [2] REVENUE GUARD & SECURITY (The 2-Bob Token Tax):
  * - MANDATORY: Every record creation is locked behind the Revenue Guard.
- * - ATOMICITY: 1 Token deduction and 1 Record creation must happen as a 
+ * - ATOMICITY: 1 Token deduction and 1 Record creation must happen as a
  * single unit. If one fails, the entire transaction rolls back.
  * - IMMUTABILITY: All records are READ-ONLY for users to prevent tampering.
  *
  * [3] DATA ARCHITECTURE (Neon Postgres + Google Sheets):
- * - MULTI-TENANCY: Unified tables [sales, hp, credits, inventory, expenses] 
+ * - MULTI-TENANCY: Unified tables [sales, hp, credits, inventory, expenses]
  * scoped dynamically by 'business_id' for high-performance scaling.
- * - TRIPLE-ENTRY LOGGING: Neon Postgres (Primary) -> Google Sheets (Live Mirror) 
+ * - TRIPLE-ENTRY LOGGING: Neon Postgres (Primary) -> Google Sheets (Live Mirror)
  * -> Digitally Signed PDF (Export).
  * - SYNC: Automatic real-time appends to Google Sheets for every new record.
  *
@@ -27,17 +27,17 @@
  *
  * [5] IN-APP DATA TABLES (The "Tap-to-View" Experience):
  * - NATIVE VIEW: Users view data via internal custom data-table components.
- * - NO EXTERNAL APPS: "Tap to View" must open within the Pay Me app, not 
+ * - NO EXTERNAL APPS: "Tap to View" must open within the Pay Me app, not
  * triggering Google Sheets or Excel apps.
- * - INSIGHTS: Dashboard must calculate Total Sales, Daily Avg, and High/Low 
+ * - INSIGHTS: Dashboard must calculate Total Sales, Daily Avg, and High/Low
  * sales days on the fly from the database.
  *
  * [6] OFFICIAL STATEMENT ENGINE (PDF Export):
  * - ROLLING HISTORY: Fetch 30-day rolling windows (e.g., 26/12/25 to 26/01/26).
  * - UNBOUNDED FETCH: Renders all transactions regardless of page count.
- * - CONTINUOUS LEDGER: No daily sub-totals; just one "GRAND TOTAL" at the 
+ * - CONTINUOUS LEDGER: No daily sub-totals; just one "GRAND TOTAL" at the
  * very bottom of the final page.
- * - BANK-GRADE: Includes SHA-256 Digital Fingerprinting & QR Verification 
+ * - BANK-GRADE: Includes SHA-256 Digital Fingerprinting & QR Verification
  * codes for KCB/Equity/Bank trust.
  * * @module models/record.model
  * @version 1.5.0 (2026 Financial Engine - Matatu & Mama Mboga Optimized)
@@ -45,7 +45,17 @@
  * =============================================================================
  */
 
-import { pgTable, text, varchar, integer, decimal, timestamp, boolean, index, unique } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  text,
+  varchar,
+  integer,
+  decimal,
+  timestamp,
+  boolean,
+  index,
+  unique,
+} from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
 /**
@@ -92,7 +102,7 @@ export const records = pgTable(
     // Revenue Guard (Token Tax)
     token_deducted: integer().default(1), // Number of tokens deducted
     revenue_guard_reference: varchar({ length: 100 }), // Reference for audit trail
-    
+
     // Google Sheets Sync
     synced_to_sheets: boolean().default(false),
     sheets_row_id: varchar({ length: 100 }), // Row ID in Google Sheets
@@ -111,13 +121,19 @@ export const records = pgTable(
   table => [
     index('idx_records_business_id').on(table.business_id),
     index('idx_records_type_business').on(table.type, table.business_id),
-    index('idx_records_date_business').on(table.transaction_date, table.business_id),
+    index('idx_records_date_business').on(
+      table.transaction_date,
+      table.business_id
+    ),
     index('idx_records_payment_method').on(table.payment_method),
     index('idx_records_callback_pending').on(table.callback_processed),
     index('idx_records_mpesa_id').on(table.mpesa_transaction_id),
     index('idx_records_sheets_sync').on(table.synced_to_sheets),
     // Unique constraint for idempotency on M-Pesa transactions
-    unique('unique_mpesa_transaction').on(table.business_id, table.mpesa_transaction_id),
+    unique('unique_mpesa_transaction').on(
+      table.business_id,
+      table.mpesa_transaction_id
+    ),
     // Unique constraint for callback idempotency
     unique('unique_reference_id').on(table.business_id, table.reference_id),
   ]
@@ -184,7 +200,7 @@ export const verification_codes = pgTable(
     // Metadata
     pdf_filename: varchar({ length: 255 }),
     record_count: integer().notNull(),
-    
+
     // Status Tracking
     used: boolean().default(false),
     verified_at: timestamp(),

@@ -17,11 +17,7 @@ const router = express.Router();
  * Body: { saleId, phone, amount }
  * Authentication: Required
  */
-router.post(
-  '/initiate',
-  authenticateToken,
-  initiateWalletPayment
-);
+router.post('/initiate', authenticateToken, initiateWalletPayment);
 
 /**
  * POST /api/wallet-payment/complete
@@ -29,10 +25,7 @@ router.post(
  * Body: { walletPaymentId, mpesaTransactionId, status }
  * Authentication: Not required (webhook)
  */
-router.post(
-  '/complete',
-  completeWalletPayment
-);
+router.post('/complete', completeWalletPayment);
 
 /**
  * GET /api/wallet-payment/status/:paymentId
@@ -40,11 +33,7 @@ router.post(
  * Response: { walletPayment }
  * Authentication: Required
  */
-router.get(
-  '/status/:paymentId',
-  authenticateToken,
-  getWalletPaymentStatus
-);
+router.get('/status/:paymentId', authenticateToken, getWalletPaymentStatus);
 
 /**
  * GET /api/wallet-payment/balance/:businessId
@@ -52,11 +41,7 @@ router.get(
  * Response: { balanceTokens, balanceKsh }
  * Authentication: Required
  */
-router.get(
-  '/balance/:businessId',
-  authenticateToken,
-  getWalletBalance
-);
+router.get('/balance/:businessId', authenticateToken, getWalletBalance);
 
 /**
  * GET /api/wallet-payment/transactions/:businessId

@@ -29,7 +29,9 @@ export const businesses = pgTable('businesses', {
   verified: boolean('verified').notNull().default(false),
 
   // Google Sheets Integration
-  google_sheets_spreadsheet_id: varchar('google_sheets_spreadsheet_id', { length: 255 }),
+  google_sheets_spreadsheet_id: varchar('google_sheets_spreadsheet_id', {
+    length: 255,
+  }),
   google_sheets_enabled: boolean('google_sheets_enabled').default(false),
   google_sheets_auth_token: text('google_sheets_auth_token'), // Stores encrypted refresh token
 

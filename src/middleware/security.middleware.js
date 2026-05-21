@@ -18,6 +18,9 @@ const securityMiddleware = async (req, res, next) => {
       case 'guest':
         limit = 5;
         break;
+      default:
+        limit = 5;
+        break;
     }
 
     const client = aj.withRule(
@@ -66,8 +69,8 @@ const securityMiddleware = async (req, res, next) => {
       });
 
       return res
-        .status(403)
-        .json({ error: 'Forbidden', message: 'Too many requests' });
+        .status(429)
+        .json({ error: 'Too Many Requests', message: 'Too many requests' });
     }
 
     next();

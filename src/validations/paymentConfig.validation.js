@@ -1,70 +1,139 @@
 import { z } from 'zod';
 
 /**
- * Payment Configuration Validation Schemas
- * Validates business M-Pesa payment method setup
+ * Payment Configuration Validation
+ *
+ * PAYBILL setup requires:
+ *   - paybill_number   : Your M-Pesa paybill number (e.g. 123456)
+ *   - account_number   : Account reference shown on customer's phone (max 12 chars, e.g. your store name or order ref)
+ *   - passkey          : Lipa Na M-Pesa Online passkey from Daraja portal
+ *
+ * TILL NUMBER setup requires:
+ *   - till_number      : Your M-Pesa till number (e.g. 123456)
+ *   - store_name       : Your store name shown on customer's phone (optional, max 12 chars)
+ *   - passkey          : Lipa Na M-Pesa Online passkey from Daraja portal
  */
 
-// Payment method enum: aligned with businesses table
-// 'till_number' - for till number payments
-// 'paybill' - for paybill payments
-// Note: 'wallet' is handled separately for token purchases
-const paymentMethodSchema = z.enum(['till_number', 'paybill']).describe(
-  'Payment method: till_number or paybill (M-Pesa Daraja STK Push)'
-);
+export const setupPaymentConfigSchema = z
+  .object({
+    payment_method: z.enum(['till_number', 'paybill'], {
+      errorMap: () => ({
+        message: 'Payment method must be either \'till_number\' or \'paybill\'',
+      }),
+    }),
+
+    // The shortcode — till number OR paybill number
+    shortcode: z
+      .string()
+      .trim()
+      .min(5, 'Shortcode must be at least 5 digits')
+      .max(10, 'Shortcode must not exceed 10 digits')
+      .regex(/^\d+$/, 'Shortcode must contain digits only'),
+
+    // Passkey from Daraja portal (same for both)
+    passkey: z
+      .string()
+      .trim()
+      .min(1, 'Passkey is required — get this from your Daraja portal'),
+
+    // Paybill: account number shown to customer (required for paybill)
+    // Till: store reference shown to customer (optional)
+    account_reference: z
+      .string()
+      .trim()
+      .max(
+        12,
+        'Account reference must not exceed 12 characters — Safaricom limit'
+      )
+      .regex(
+        /^[a-zA-Z0-9\s]*$/,
+        'Account reference can only contain letters, numbers, and spaces'
+      )
+      .optional()
+      .or(z.literal('')),
+
+    // Display name for your own reference (not sent to Safaricom)
+    account_name: z.string().trim().max(255).optional().or(z.literal('')),
+  })
+  .superRefine((data, ctx) => {
+    if (data.payment_method === 'paybill') {
+      if (!data.account_reference || data.account_reference.trim() === '') {
+        ctx.addIssue({
+          path: ['account_reference'],
+          code: z.ZodIssueCode.custom,
+          message:
+            'Account number is required for paybill. This is shown on your customer\'s phone when they pay. Example: your store name or "SHOP001" (max 12 chars)',
+        });
+      }
+    }
+  });
+
+export const updatePaymentConfigSchema = setupPaymentConfigSchema
+  .partial()
+  .extend({
+    is_active: z.boolean().optional(),
+  });
 
 /**
- * Setup payment configuration (after user signup)
- * User selects payment method and provides credentials
+ * Field descriptions returned to frontend for UI guidance
  */
-export const setupPaymentConfigSchema = z.object({
-  payment_method: paymentMethodSchema,
-  shortcode: z.string()
-    .trim()
-    .min(5, 'Shortcode must be at least 5 characters')
-    .max(20, 'Shortcode must not exceed 20 characters')
-    .regex(/^[0-9a-zA-Z]+$/, 'Shortcode must be alphanumeric')
-    .describe('M-Pesa shortcode (till or paybill number)'),
-  passkey: z.string()
-    .trim()
-    .min(1, 'Passkey is required')
-    .describe('M-Pesa Daraja passkey from portal'),
-  account_reference: z.string()
-    .trim()
-    .min(1, 'Account reference/store number is required')
-    .max(50, 'Account reference must not exceed 50 characters')
-    .regex(/^[a-zA-Z0-9]+$/, 'Account reference must be alphanumeric')
-    .describe('For paybill: Account reference (max 12 chars). For till: Store number.'),
-  account_name: z.string()
-    .trim()
-    .max(255, 'Account name must not exceed 255 characters')
-    .optional()
-    .or(z.literal(''))
-    .describe('Optional account display name'),
-});
+export const getPaymentConfigFields = paymentMethod => {
+  if (paymentMethod === 'paybill') {
+    return {
+      shortcode: {
+        label: 'Paybill Number',
+        placeholder: 'e.g. 123456',
+        hint: 'Your M-Pesa Paybill number from Safaricom',
+        required: true,
+      },
+      account_reference: {
+        label: 'Account Number',
+        placeholder: 'e.g. SHOP001 (max 12 chars)',
+        hint: 'This is shown on your customer\'s phone when they pay. Use your store name or a short identifier.',
+        required: true,
+        maxLength: 12,
+      },
+      passkey: {
+        label: 'Lipa Na M-Pesa Passkey',
+        placeholder: 'Paste your passkey from Daraja portal',
+        hint: 'Get this from developer.safaricom.co.ke → Your App → M-Pesa Express → Passkey',
+        required: true,
+      },
+      account_name: {
+        label: 'Display Name (optional)',
+        placeholder: 'e.g. My Shop Paybill',
+        hint: 'For your own reference only — not sent to Safaricom',
+        required: false,
+      },
+    };
+  }
 
-/**
- * Update existing payment configuration
- * Can update passkey and account name without changing method
- */
-export const updatePaymentConfigSchema = setupPaymentConfigSchema.partial().extend({
-  is_active: z.boolean()
-    .optional()
-    .describe('Toggle payment config active status'),
-});
-
-/**
- * Get payment config response
- */
-export const getPaymentConfigSchema = z.object({
-  id: z.number(),
-  business_id: z.number(),
-  payment_method: paymentMethodSchema,
-  shortcode: z.string(),
-  account_reference: z.string(),
-  account_name: z.string().optional(),
-  verified: z.boolean(),
-  is_active: z.boolean(),
-  created_at: z.date().or(z.string()),
-  updated_at: z.date().or(z.string()),
-});
+  // till_number
+  return {
+    shortcode: {
+      label: 'Till Number',
+      placeholder: 'e.g. 123456',
+      hint: 'Your M-Pesa Till number from Safaricom',
+      required: true,
+    },
+    account_reference: {
+      label: 'Store Name (optional)',
+      placeholder: 'e.g. MY SHOP (max 12 chars)',
+      hint: 'Shown on your customer\'s phone. Leave blank to use your till number.',
+      required: false,
+      maxLength: 12,
+    },
+    passkey: {
+      label: 'Lipa Na M-Pesa Passkey',
+      placeholder: 'Paste your passkey from Daraja portal',
+      hint: 'Get this from developer.safaricom.co.ke → Your App → M-Pesa Express → Passkey',
+      required: true,
+    },
+    account_name: {
+      label: 'Display Name (optional)',
+      placeholder: 'e.g. My Shop Till',
+      hint: 'For your own reference only — not sent to Safaricom',
+      required: false,
+    },
+  };
+};

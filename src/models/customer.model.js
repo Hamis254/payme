@@ -89,7 +89,9 @@ export const customerPreferences = pgTable('customer_preferences', {
   /* purchase preferences */
   favorite_products: text('favorite_products'), // JSON array of product IDs
   preferred_payment: varchar('preferred_payment', { length: 50 }), // cash | mpesa | credit
-  average_spend: decimal('average_spend', { precision: 12, scale: 2 }).default(0),
+  average_spend: decimal('average_spend', { precision: 12, scale: 2 }).default(
+    0
+  ),
 
   /* contact preferences */
   best_contact_time: varchar('best_contact_time', { length: 100 }), // "mornings", "evenings", "weekends"
@@ -121,9 +123,17 @@ export const customerPurchaseHistory = pgTable('customer_purchase_history', {
 
   /* metrics */
   total_purchases: integer('total_purchases').notNull().default(0),
-  total_spent: decimal('total_spent', { precision: 12, scale: 2 }).notNull().default(0),
-  total_items_bought: decimal('total_items_bought', { precision: 12, scale: 3 }).default(0),
-  avg_transaction_value: decimal('avg_transaction_value', { precision: 12, scale: 2 }).default(0),
+  total_spent: decimal('total_spent', { precision: 12, scale: 2 })
+    .notNull()
+    .default(0),
+  total_items_bought: decimal('total_items_bought', {
+    precision: 12,
+    scale: 3,
+  }).default(0),
+  avg_transaction_value: decimal('avg_transaction_value', {
+    precision: 12,
+    scale: 2,
+  }).default(0),
 
   /* dates */
   first_purchase_date: date('first_purchase_date'),
@@ -132,7 +142,10 @@ export const customerPurchaseHistory = pgTable('customer_purchase_history', {
 
   /* customer status */
   is_repeat_customer: boolean('is_repeat_customer').default(false), // 2+ purchases
-  customer_lifetime_value: decimal('customer_lifetime_value', { precision: 12, scale: 2 }).default(0),
+  customer_lifetime_value: decimal('customer_lifetime_value', {
+    precision: 12,
+    scale: 2,
+  }).default(0),
   repeat_frequency: varchar('repeat_frequency', { length: 50 }), // one_time | occasional | regular | frequent
 
   created_at: timestamp('created_at').defaultNow().notNull(),

@@ -183,9 +183,7 @@ export const globalErrorHandler = (error, req, res, next) => {
  * Catches all unmatched routes
  */
 export const notFoundHandler = (req, res, next) => {
-  const error = new NotFoundError(
-    `Route not found: ${req.method} ${req.path}`
-  );
+  const error = new NotFoundError(`Route not found: ${req.method} ${req.path}`);
   next(error);
 };
 

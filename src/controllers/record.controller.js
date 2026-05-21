@@ -7,7 +7,7 @@
  */
 
 import logger from '#config/logger.js';
-import { deductTokens, refundTokens } from '#middleware/revenueGuard.middleware.js';
+// Token deduction is handled inside `createRecord` transaction — no manual calls
 import * as recordService from '#services/record.service.js';
 import * as statementService from '#services/statementService.js';
 import {
@@ -50,25 +50,7 @@ export async function createRecord(req, res, next) {
     // Create record (with token deduction & Google Sheets sync)
     const record = await recordService.createRecord(recordData);
 
-    // Deduct tokens after successful record creation
-    try {
-      await deductTokens(
-        req.revenueGuard.wallet_id,
-        req.revenueGuard.tokens_to_deduct,
-        {
-          record_id: record.id,
-          business_id: parseInt(business_id),
-          record_type: record.type,
-          amount_kes: record.amount || 0,
-        }
-      );
-    } catch (deductError) {
-      logger.error('Token deduction failed for record', {
-        record_id: record.id,
-        error: deductError.message,
-      });
-      throw deductError;
-    }
+    // Token deduction occurs inside `recordService.createRecord`
 
     logger.info('Record created via API', {
       record_id: record.id,
@@ -92,24 +74,12 @@ export async function createRecord(req, res, next) {
       request_id: requestId,
     });
 
-    // Refund tokens if deduction succeeded but something else failed
-    if (req.revenueGuard?.wallet_id && error.message !== 'Insufficient tokens. Please purchase tokens to create records.') {
-      try {
-        await refundTokens(
-          req.revenueGuard.wallet_id,
-          req.revenueGuard.tokens_to_deduct,
-          `Record creation error: ${error.message}`
-        );
-      } catch (refundError) {
-        logger.error('Refund failed - manual intervention needed', {
-          wallet_id: req.revenueGuard.wallet_id,
-          error: refundError.message,
-          request_id: requestId,
-        });
-      }
-    }
+    // No manual refund necessary — `createRecord` handles atomic deduction
 
-    if (error.message === 'Insufficient tokens. Please purchase tokens to create records.') {
+    if (
+      error.message ===
+      'Insufficient tokens. Please purchase tokens to create records.'
+    ) {
       return res.status(402).json({
         error: 'Insufficient tokens',
         message: error.message,

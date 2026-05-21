@@ -19,8 +19,8 @@ export const asyncHandler = fn => (req, res, next) => {
  * Validate request body using Zod schema
  * Automatically handles validation and error response
  */
-export const validateRequest = schema => asyncHandler(
-  async (req, res, next) => {
+export const validateRequest = schema =>
+  asyncHandler(async (req, res, next) => {
     const result = schema.safeParse(req.body);
 
     if (!result.success) {
@@ -46,8 +46,7 @@ export const validateRequest = schema => asyncHandler(
     // Attach validated data to request
     req.validatedData = result.data;
     next();
-  }
-);
+  });
 
 /**
  * Verify user is authenticated
@@ -73,63 +72,65 @@ export const requireAuth = asyncHandler((req, res, next) => {
  * Verify user has required role
  * Can be chained: [requireAuth, requireRole(['admin'])]
  */
-export const requireRole = allowedRoles => asyncHandler((req, res, next) => {
-  if (!req.user) {
-    return res.status(401).json({
-      error: 'AuthenticationError',
-      message: 'Authentication required',
-    });
-  }
+export const requireRole = allowedRoles =>
+  asyncHandler((req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
+        error: 'AuthenticationError',
+        message: 'Authentication required',
+      });
+    }
 
-  if (!Array.isArray(allowedRoles)) {
-    allowedRoles = [allowedRoles];
-  }
+    if (!Array.isArray(allowedRoles)) {
+      allowedRoles = [allowedRoles];
+    }
 
-  if (!allowedRoles.includes(req.user.role)) {
-    logger.warn('Unauthorized role access', {
-      requiredRole: allowedRoles,
-      userRole: req.user.role,
-      userId: req.user.id,
-      path: req.path,
-    });
+    if (!allowedRoles.includes(req.user.role)) {
+      logger.warn('Unauthorized role access', {
+        requiredRole: allowedRoles,
+        userRole: req.user.role,
+        userId: req.user.id,
+        path: req.path,
+      });
 
-    return res.status(403).json({
-      error: 'AuthorizationError',
-      message: 'Insufficient permissions',
-      requiredRole: allowedRoles,
-    });
-  }
+      return res.status(403).json({
+        error: 'AuthorizationError',
+        message: 'Insufficient permissions',
+        requiredRole: allowedRoles,
+      });
+    }
 
-  next();
-});
+    next();
+  });
 
 /**
  * Convert route parameters to typed values
  * Validates numeric IDs, etc.
  */
-export const parseParams = schema => asyncHandler(async (req, res, next) => {
-  const result = schema.safeParse(req.params);
+export const parseParams = schema =>
+  asyncHandler(async (req, res, next) => {
+    const result = schema.safeParse(req.params);
 
-  if (!result.success) {
-    logger.warn('Invalid route parameters', {
-      path: req.path,
-      params: req.params,
-      errors: result.error.issues,
-    });
+    if (!result.success) {
+      logger.warn('Invalid route parameters', {
+        path: req.path,
+        params: req.params,
+        errors: result.error.issues,
+      });
 
-    return res.status(400).json({
-      error: 'ValidationError',
-      message: 'Invalid route parameters',
-      details: result.error.issues.map(i => ({
-        field: i.path.join('.'),
-        message: i.message,
-      })),
-    });
-  }
+      return res.status(400).json({
+        error: 'ValidationError',
+        message: 'Invalid route parameters',
+        details: result.error.issues.map(i => ({
+          field: i.path.join('.'),
+          message: i.message,
+        })),
+      });
+    }
 
-  req.validatedParams = result.data;
-  next();
-});
+    req.validatedParams = result.data;
+    next();
+  });
 
 /**
  * Rate limit check using request metadata

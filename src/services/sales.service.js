@@ -9,10 +9,12 @@ import {
   deductStockFIFO,
 } from '#services/stock.service.js';
 
-// Validate cart items and calculate totals before creating sale
+/**
+ * Validate cart items against the DB and calculate totals.
+ * Prices are always read from DB — frontend never sends prices.
+ */
 export const validateAndCalculateCart = async (userId, businessId, items) => {
   try {
-    // Verify user owns the business
     const [business] = await db
       .select()
       .from(businesses)
@@ -25,7 +27,6 @@ export const validateAndCalculateCart = async (userId, businessId, items) => {
     let totalAmount = 0;
 
     for (const item of items) {
-      // Validate product exists and belongs to business
       const [product] = await db
         .select()
         .from(products)
@@ -41,7 +42,6 @@ export const validateAndCalculateCart = async (userId, businessId, items) => {
         throw new Error(`Product ${item.product_id} not found`);
       }
 
-      // Check stock availability
       const stockCheck = await checkStockAvailability(
         item.product_id,
         item.quantity
@@ -49,11 +49,10 @@ export const validateAndCalculateCart = async (userId, businessId, items) => {
 
       if (!stockCheck.available) {
         throw new Error(
-          `Insufficient stock for ${product.name}. Available: ${stockCheck.total_available} ${product.unit}, Requested: ${item.quantity} ${product.unit}`
+          `Insufficient stock for ${product.name}. Available: ${stockCheck.total_available}, Requested: ${item.quantity}`
         );
       }
 
-      // Use product's selling price per unit
       const unitPrice = Number(product.selling_price_per_unit);
       const lineTotal = unitPrice * item.quantity;
 
@@ -82,7 +81,17 @@ export const validateAndCalculateCart = async (userId, businessId, items) => {
   }
 };
 
-// Create a sale and deduct stock
+/**
+ * Create a sale and handle stock deduction based on payment mode.
+ *
+ * Stock deduction rules:
+ *   cash / credit / hire_purchase → deduct stock immediately (goods leave the shop)
+ *   mpesa                         → create pending sale, deduct stock in callback
+ *                                   after resultCode === 0
+ *
+ * For M-Pesa, unit_cost and profit on saleItems are set to 0 initially.
+ * They are backfilled with real FIFO costs in the mpesaCallbackHandler.
+ */
 export const createSale = async (
   userId,
   businessId,
@@ -91,100 +100,122 @@ export const createSale = async (
   options = {}
 ) => {
   try {
-    // Validate cart first
     const cartValidation = await validateAndCalculateCart(
       userId,
       businessId,
       items
     );
 
-    // Process each item: deduct stock and calculate actual profit
     const processedItems = [];
     let totalProfit = 0;
 
     for (const item of items) {
-      // Deduct stock using FIFO for accurate profit calculation
-      // This uses the batch cost from purchase movements
-      const deduction = await deductStockFIFO(item.product_id, item.quantity);
-
-      // Get the validated item info
       const validatedItem = cartValidation.items.find(
         i => i.product_id === item.product_id
       );
 
-      // Calculate profit using actual FIFO cost
-      const totalDeductionCost = deduction.deductions.reduce(
-        (sum, d) => sum + d.total_cost,
-        0
-      );
-      const totalPrice = validatedItem.unit_price * item.quantity;
-      const profit = totalPrice - totalDeductionCost;
+      let avgUnitCost = 0;
+      let profit = 0;
 
-      // Calculate average unit cost from FIFO deductions
-      const avgUnitCost = deduction.deductions.length > 0
-        ? totalDeductionCost / item.quantity
-        : 0;
+      if (
+        paymentMode === 'cash' ||
+        paymentMode === 'credit' ||
+        paymentMode === 'hire_purchase'
+      ) {
+        // Goods leave the shop immediately — deduct stock via FIFO
+        const deduction = await deductStockFIFO(item.product_id, item.quantity);
+
+        const totalCost = deduction.deductions.reduce(
+          (sum, d) => sum + d.total_cost,
+          0
+        );
+        const totalPrice = validatedItem.unit_price * item.quantity;
+        profit = totalPrice - totalCost;
+        avgUnitCost =
+          deduction.deductions.length > 0 ? totalCost / item.quantity : 0;
+
+        // Log stock movements for immediate deductions
+        for (const d of deduction.deductions) {
+          await db.insert(stockMovements).values({
+            product_id: item.product_id,
+            batch_id: d.batch_id,
+            type: 'sale',
+            quantity_change: String(-d.quantity),
+            unit_cost: String(d.unit_cost),
+            reference_type: 'sale',
+            reason: `${paymentMode} sale - FIFO batch ${d.batch_id || 'current'}`,
+          });
+        }
+      } else {
+        // M-Pesa: sale is pending — do NOT deduct stock yet
+        // Stock will be deducted in mpesaCallbackHandler on resultCode === 0
+        // unit_cost and profit will be backfilled at that point
+        const totalPrice = validatedItem.unit_price * item.quantity;
+        profit = 0; // Unknown until FIFO runs at callback
+        avgUnitCost = 0; // Unknown until FIFO runs at callback
+        // We still need totalProfit for the sale record; it'll be corrected in callback
+        totalProfit += totalPrice; // Provisional revenue-only figure
+      }
 
       processedItems.push({
         product_id: item.product_id,
+        product_name: validatedItem.product_name,
         quantity: item.quantity,
         unit_price: validatedItem.unit_price,
-        total_price: Number(totalPrice.toFixed(2)),
+        total_price: Number(
+          (validatedItem.unit_price * item.quantity).toFixed(2)
+        ),
         unit_cost: avgUnitCost,
         profit: Number(profit.toFixed(2)),
-        product_name: validatedItem.product_name,
       });
 
-      // Log stock movement for each FIFO deduction batch
-      for (const d of deduction.deductions) {
-        await db.insert(stockMovements).values({
-          product_id: item.product_id,
-          batch_id: d.batch_id,
-          type: 'sale',
-          quantity_change: String(-d.quantity),
-          unit_cost: String(d.unit_cost),
-          reference_type: 'sale',
-          reason: `Sale - FIFO batch ${d.batch_id || 'current'}`,
-        });
+      if (paymentMode !== 'mpesa') {
+        totalProfit += profit;
       }
-
-      totalProfit += profit;
     }
 
-    // Create the sale record
+    // For M-Pesa we set totalProfit to 0 — corrected in callback
+    const finalTotalProfit = paymentMode === 'mpesa' ? 0 : totalProfit;
+
+    // Create sale record
     const [sale] = await db
       .insert(sales)
       .values({
         business_id: businessId,
         total_amount: String(cartValidation.total_amount),
-        total_profit: String(totalProfit.toFixed(2)),
+        total_profit: String(Number(finalTotalProfit.toFixed(2))),
         payment_mode: paymentMode,
-        status: paymentMode === 'cash' ? 'completed' : 'pending',
+        // Cash / credit / HP: goods are out → completed immediately
+        // M-Pesa: awaiting payment confirmation → pending
+        status: ['cash', 'credit', 'hire_purchase'].includes(paymentMode)
+          ? 'completed'
+          : 'pending',
         customer_type: options.customer_type || 'walk_in',
-        customer_id: options.customer_id,
-        note: options.note,
-        mpesa_sender_phone: options.customer_phone,
+        customer_id: options.customer_id || null,
+        note: options.note || null,
+        mpesa_sender_phone: options.customer_phone || null,
+        created_at: new Date(),
+        updated_at: new Date(),
       })
       .returning();
 
-    // Create sale items
+    // Insert sale items (with product_name captured for historical accuracy)
     for (const item of processedItems) {
       await db.insert(saleItems).values({
         sale_id: sale.id,
         product_id: item.product_id,
+        product_name: item.product_name,
         quantity: String(item.quantity),
         unit_price: String(item.unit_price),
         total_price: String(item.total_price),
         unit_cost: String(item.unit_cost),
         profit: String(item.profit),
+        created_at: new Date(),
       });
     }
 
-    // Update stock movement references with sale ID
-    // (This is a simplified approach; in production you'd do this in transaction)
-
     logger.info(
-      `Sale created: ${sale.id} for business ${businessId}, total: ${cartValidation.total_amount}, profit: ${totalProfit.toFixed(2)}`
+      `Sale created: ${sale.id} — business ${businessId}, mode: ${paymentMode}, total: ${cartValidation.total_amount}`
     );
 
     return {
@@ -202,10 +233,16 @@ export const createSale = async (
       summary: {
         items_count: processedItems.length,
         total_amount: cartValidation.total_amount,
-        total_profit: Number(totalProfit.toFixed(2)),
-        profit_margin_percent: Number(
-          ((totalProfit / cartValidation.total_amount) * 100).toFixed(2)
-        ),
+        total_profit: Number(finalTotalProfit.toFixed(2)),
+        profit_margin_percent:
+          paymentMode !== 'mpesa' && cartValidation.total_amount > 0
+            ? Number(
+              (
+                (finalTotalProfit / cartValidation.total_amount) *
+                  100
+              ).toFixed(2)
+            )
+            : 0,
       },
     };
   } catch (e) {
@@ -214,13 +251,12 @@ export const createSale = async (
   }
 };
 
-// Update sale status (for MPESA callback)
+/**
+ * Update sale status (used by M-Pesa callback utilities)
+ */
 export const updateSaleStatus = async (saleId, status, mpesaData = {}) => {
   try {
-    const updateData = {
-      status,
-      updated_at: new Date(),
-    };
+    const updateData = { status, updated_at: new Date() };
 
     if (mpesaData.transaction_id) {
       updateData.mpesa_transaction_id = mpesaData.transaction_id;
@@ -246,10 +282,11 @@ export const updateSaleStatus = async (saleId, status, mpesaData = {}) => {
   }
 };
 
-// Get sales for a business
+/**
+ * Get all sales for a business (with totals)
+ */
 export const getSalesForBusiness = async (userId, businessId, options = {}) => {
   try {
-    // Verify user owns the business
     const [business] = await db
       .select()
       .from(businesses)
@@ -270,7 +307,6 @@ export const getSalesForBusiness = async (userId, businessId, options = {}) => {
 
     const salesList = await query;
 
-    // Calculate totals
     let totalRevenue = 0;
     let totalProfit = 0;
 
@@ -295,7 +331,9 @@ export const getSalesForBusiness = async (userId, businessId, options = {}) => {
   }
 };
 
-// Get sale details with items
+/**
+ * Get a single sale with all its items
+ */
 export const getSaleById = async (userId, saleId) => {
   try {
     const [sale] = await db
@@ -306,7 +344,6 @@ export const getSaleById = async (userId, saleId) => {
 
     if (!sale) throw new Error('Sale not found');
 
-    // Verify user owns the business
     const [business] = await db
       .select()
       .from(businesses)
@@ -317,13 +354,11 @@ export const getSaleById = async (userId, saleId) => {
 
     if (!business) throw new Error('Sale not found or access denied');
 
-    // Get sale items with product names
     const items = await db
       .select({
         id: saleItems.id,
         product_id: saleItems.product_id,
-        product_name: products.name,
-        unit: products.unit,
+        product_name: saleItems.product_name,
         quantity: saleItems.quantity,
         unit_price: saleItems.unit_price,
         total_price: saleItems.total_price,
@@ -331,7 +366,6 @@ export const getSaleById = async (userId, saleId) => {
         profit: saleItems.profit,
       })
       .from(saleItems)
-      .leftJoin(products, eq(saleItems.product_id, products.id))
       .where(eq(saleItems.sale_id, saleId));
 
     return {

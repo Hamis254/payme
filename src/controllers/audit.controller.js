@@ -113,7 +113,11 @@ export const getUserAuditLogsHandler = async (req, res, next) => {
 
     const limit = parseInt(req.query.limit) || 50;
 
-    const logs = await getUserAuditLogs(parseInt(businessId), parseInt(userId), limit);
+    const logs = await getUserAuditLogs(
+      parseInt(businessId),
+      parseInt(userId),
+      limit
+    );
 
     return res.status(200).json({
       success: true,
@@ -165,7 +169,8 @@ export const createAuditLogHandler = async (req, res, next) => {
     const { businessId } = req.params;
     await verifyBusinessOwnership(parseInt(businessId), req.user.id);
 
-    const { action, entityType, entityId, oldValues, newValues, metadata } = req.body;
+    const { action, entityType, entityId, oldValues, newValues, metadata } =
+      req.body;
 
     if (!action || !entityType) {
       return res.status(400).json({

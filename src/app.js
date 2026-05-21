@@ -26,6 +26,8 @@ import customerRoutes from '#routes/customer.routes.js';
 import reconciliationRoutes from '#routes/reconciliation.routes.js';
 import auditRoutes from '#routes/audit.routes.js';
 import offlineRoutes from '#routes/offline.routes.js';
+import googleSheetsRoutes from '#routes/googleSheets.routes.js';
+import { attachUserIfPresent } from '#middleware/auth.middleware.js';
 import {
   globalErrorHandler,
   notFoundHandler,
@@ -49,8 +51,16 @@ app.use(securityHeaders);
 // HPP protection - prevent HTTP Parameter Pollution
 app.use(hppProtection);
 
-// CORS configuration
-app.use(cors());
+// CORS — restrict to allowed origins only
+app.use(
+  cors({
+    origin: process.env.ALLOWED_ORIGINS
+      ? process.env.ALLOWED_ORIGINS.split(',')
+      : ['http://localhost:3000', 'http://localhost:8081'],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  })
+);
 
 // Body parsers
 app.use(express.json());
@@ -58,6 +68,10 @@ app.use(express.urlencoded({ extended: true }));
 
 // Cookie parser
 app.use(cookieParser());
+
+// Optionally attach user early so global security middleware can
+// apply role-aware rules when token is present.
+app.use(attachUserIfPresent);
 
 // XSS and injection attack logging
 app.use(suspiciousActivityLogger);
@@ -110,7 +124,7 @@ app.get('/api', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/businesses', businessesRoutes);
-app.use('/api/setting', businessesRoutes);
+// NOTE: /api/setting alias removed — use /api/businesses exclusively
 app.use('/api/payment-config', paymentConfigRoutes);
 app.use('/api/stock', stockRoutes);
 app.use('/api/sales', salesRoutes);
@@ -130,6 +144,7 @@ app.use('/api/customers', customerRoutes);
 app.use('/api/reconciliation', reconciliationRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/offline', offlineRoutes);
+app.use('/api/google-sheets', googleSheetsRoutes);
 
 // ============ ERROR HANDLING ============
 

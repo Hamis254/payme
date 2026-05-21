@@ -21,7 +21,9 @@ export const initializeSocket = async server => {
 
     // If socket.io not available, skip initialization
     if (!SocketIO) {
-      logger.warn('socket.io module not found - real-time notifications disabled');
+      logger.warn(
+        'socket.io module not found - real-time notifications disabled'
+      );
       return;
     }
 
@@ -90,7 +92,9 @@ export const initializeSocket = async server => {
       // Subscribe to business notifications
       socket.on('subscribe:business', businessId => {
         socket.join(`business:${businessId}`);
-        logger.info(`User ${socket.email} subscribed to business ${businessId}`);
+        logger.info(
+          `User ${socket.email} subscribed to business ${businessId}`
+        );
       });
 
       // Unsubscribe from business notifications
@@ -121,7 +125,9 @@ export const initializeSocket = async server => {
 
 export const emitToUser = (userId, event, data) => {
   if (!socketAvailable) {
-    logger.debug(`Socket not available. Event ${event} not emitted to user ${userId}`);
+    logger.debug(
+      `Socket not available. Event ${event} not emitted to user ${userId}`
+    );
     return false;
   }
   if (io) {
@@ -133,7 +139,9 @@ export const emitToUser = (userId, event, data) => {
 
 export const emitToBusiness = (businessId, event, data) => {
   if (!socketAvailable) {
-    logger.debug(`Socket not available. Event ${event} not emitted to business ${businessId}`);
+    logger.debug(
+      `Socket not available. Event ${event} not emitted to business ${businessId}`
+    );
     return false;
   }
   if (io) {

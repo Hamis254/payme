@@ -32,24 +32,35 @@ export const updatePreferencesSchema = z.object({
   credit_notifications: z.boolean().optional(),
   expense_notifications: z.boolean().optional(),
   daily_summary: z.boolean().optional(),
-  sms_phone: z.string().regex(/^(\+?254|0)[17][0-9]{8}$/).optional(),
+  sms_phone: z
+    .string()
+    .regex(/^(\+?254|0)[17][0-9]{8}$/)
+    .optional(),
   quiet_hours_enabled: z.boolean().optional(),
-  quiet_start: z.string().regex(/^\d{2}:\d{2}$/).optional(), // HH:mm
-  quiet_end: z.string().regex(/^\d{2}:\d{2}$/).optional(), // HH:mm
+  quiet_start: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/)
+    .optional(), // HH:mm
+  quiet_end: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/)
+    .optional(), // HH:mm
 });
 
 export const testNotificationSchema = z.object({
-  type: z.enum([
-    'payment_complete',
-    'payment_failed',
-    'low_stock',
-    'stock_expiring',
-    'sale_created',
-    'wallet_low',
-    'wallet_purchased',
-    'credit_payment_due',
-    'expense_recorded',
-    'daily_summary',
-  ]).optional(),
+  type: z
+    .enum([
+      'payment_complete',
+      'payment_failed',
+      'low_stock',
+      'stock_expiring',
+      'sale_created',
+      'wallet_low',
+      'wallet_purchased',
+      'credit_payment_due',
+      'expense_recorded',
+      'daily_summary',
+    ])
+    .optional(),
   channel: z.enum(['in_app', 'sms', 'email', 'all']).default('all'),
 });

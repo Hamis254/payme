@@ -1,9 +1,8 @@
 import express from 'express';
 import { authenticateToken } from '#middleware/auth.middleware.js';
-import { revenueGuard } from '#middleware/revenueGuard.middleware.js';
 import { webhookLimiter } from '#middleware/rateLimiter.middleware.js';
+import { validateMpesaWebhook } from '#middleware/webhookSecurity.middleware.js';
 import {
-  createSaleHandler,
   getSaleHandler,
   listSalesHandler,
   payCashHandler,
@@ -14,29 +13,46 @@ import {
 
 const router = express.Router();
 
-// M-Pesa callback endpoint (public - no auth required)
-// Rate limited to prevent abuse
-router.post('/mpesa/callback', webhookLimiter, mpesaCallbackHandler);
+/**
+ * NOTE: POST / (createSaleHandler) has been retired.
+ * All sale creation goes through POST /api/payme/
+ *
+ * This router handles:
+ * - M-Pesa callback (public)
+ * - Cash confirmation (auth)
+ * - M-Pesa STK initiation (auth)
+ * - Sale queries (auth)
+ * - Sale cancellation (auth)
+ */
 
-// All other routes require authentication
+// ─────────────────────────────────────────────
+// PUBLIC — M-Pesa callback (no auth, rate limited + IP validated)
+// ─────────────────────────────────────────────
+router.post(
+  '/mpesa/callback',
+  webhookLimiter,
+  validateMpesaWebhook(),
+  mpesaCallbackHandler
+);
+
+// ─────────────────────────────────────────────
+// AUTHENTICATED routes
+// ─────────────────────────────────────────────
 router.use(authenticateToken);
 
-// Create a new sale (billable - requires revenue guard)
-router.post('/', revenueGuard, createSaleHandler);
-
-// Get sales for business
+// List all sales for a business
 router.get('/business/:businessId', listSalesHandler);
 
-// Get single sale
+// Get single sale with items + payment record
 router.get('/:id', getSaleHandler);
 
-// Pay for sale with cash
+// Confirm cash payment for a pending sale
 router.post('/:id/pay/cash', payCashHandler);
 
-// Initiate M-Pesa STK Push for sale
+// Initiate M-Pesa STK push for a pending sale
 router.post('/:id/pay/mpesa', payMpesaHandler);
 
-// Cancel a pending sale
+// Cancel a pending sale (refunds token)
 router.post('/:id/cancel', cancelSaleHandler);
 
 export default router;

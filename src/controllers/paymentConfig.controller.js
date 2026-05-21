@@ -5,8 +5,14 @@
  */
 
 import logger from '#config/logger.js';
+import { db } from '#config/database.js';
+import { businesses } from '#models/setting.model.js';
+import { and, eq } from 'drizzle-orm';
 import { formatValidationError } from '#utils/format.js';
-import { setupPaymentConfigSchema, updatePaymentConfigSchema } from '#validations/paymentConfig.validation.js';
+import {
+  setupPaymentConfigSchema,
+  updatePaymentConfigSchema,
+} from '#validations/paymentConfig.validation.js';
 import {
   createPaymentConfig,
   getPaymentConfig,
@@ -14,6 +20,18 @@ import {
   getPaymentConfigById,
   verifyPaymentConfig,
 } from '#services/paymentConfig.service.js';
+
+const assertBusinessOwnership = async (businessId, userId) => {
+  const [business] = await db
+    .select({ id: businesses.id })
+    .from(businesses)
+    .where(and(eq(businesses.id, businessId), eq(businesses.user_id, userId)))
+    .limit(1);
+
+  if (!business) {
+    throw new Error('Business not found or access denied');
+  }
+};
 
 // ============ SETUP PAYMENT CONFIGURATION (Post-signup) ============
 
@@ -51,6 +69,8 @@ export const setupPaymentMethod = async (req, res, next) => {
       account_name,
     } = validationResult.data;
 
+    await assertBusinessOwnership(parseInt(businessId), userId);
+
     // Create payment config
     const config = await createPaymentConfig({
       businessId,
@@ -85,6 +105,10 @@ export const setupPaymentMethod = async (req, res, next) => {
   } catch (e) {
     logger.error('Error setting up payment method', e);
 
+    if (e.message === 'Business not found or access denied') {
+      return res.status(403).json({ error: e.message });
+    }
+
     if (e.message === 'Business not found') {
       return res.status(404).json({ error: 'Business not found' });
     }
@@ -114,6 +138,7 @@ export const getBusinessPaymentConfig = async (req, res, next) => {
       return res.status(400).json({ error: 'Missing required parameters' });
     }
 
+    await assertBusinessOwnership(parseInt(businessId), userId);
     const config = await getPaymentConfig(parseInt(businessId));
 
     if (!config) {
@@ -139,6 +164,9 @@ export const getBusinessPaymentConfig = async (req, res, next) => {
     });
   } catch (e) {
     logger.error('Error fetching payment config', e);
+    if (e.message === 'Business not found or access denied') {
+      return res.status(403).json({ error: e.message });
+    }
     next(e);
   }
 };
@@ -176,6 +204,8 @@ export const updatePaymentMethod = async (req, res, next) => {
       return res.status(404).json({ error: 'Payment configuration not found' });
     }
 
+    await assertBusinessOwnership(config.business_id, userId);
+
     // Update config
     const updated = await updatePaymentConfig(
       parseInt(configId),
@@ -203,6 +233,9 @@ export const updatePaymentMethod = async (req, res, next) => {
     });
   } catch (e) {
     logger.error('Error updating payment config', e);
+    if (e.message === 'Business not found or access denied') {
+      return res.status(403).json({ error: e.message });
+    }
     next(e);
   }
 };
@@ -232,6 +265,8 @@ export const togglePaymentConfig = async (req, res, next) => {
       return res.status(404).json({ error: 'Payment configuration not found' });
     }
 
+    await assertBusinessOwnership(config.business_id, userId);
+
     const updated = await updatePaymentConfig(parseInt(configId), {
       is_active,
     });
@@ -253,6 +288,9 @@ export const togglePaymentConfig = async (req, res, next) => {
     });
   } catch (e) {
     logger.error('Error toggling payment config', e);
+    if (e.message === 'Business not found or access denied') {
+      return res.status(403).json({ error: e.message });
+    }
     next(e);
   }
 };
@@ -278,6 +316,8 @@ export const verifyPaymentConfigHandler = async (req, res, _next) => {
     if (!config) {
       return res.status(404).json({ error: 'Payment configuration not found' });
     }
+
+    await assertBusinessOwnership(config.business_id, userId);
 
     // Verify config with M-Pesa Daraja
     await verifyPaymentConfig(parseInt(configId));
@@ -312,7 +352,8 @@ export const verifyPaymentConfigHandler = async (req, res, _next) => {
     if (e.message.includes('credentials') || e.message.includes('Invalid')) {
       return res.status(400).json({
         error: 'Invalid M-Pesa credentials',
-        message: 'Your M-Pesa credentials could not be verified with Safaricom. Please check and reconfigure.',
+        message:
+          'Your M-Pesa credentials could not be verified with Safaricom. Please check and reconfigure.',
       });
     }
 

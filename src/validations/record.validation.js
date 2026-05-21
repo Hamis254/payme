@@ -29,11 +29,7 @@ export const recordItemSchema = z.object({
 export const createSalesRecordSchema = z.object({
   business_id: z.number().positive(),
   type: z.literal('sales'),
-  category: z
-    .string()
-    .min(1)
-    .max(50)
-    .default('retail'),
+  category: z.string().min(1).max(50).default('retail'),
   amount: z.number().positive('Amount must be positive'),
   payment_method: z.enum(['cash', 'mpesa']),
   transaction_date: z.coerce.date(),
@@ -58,11 +54,7 @@ export const createSalesRecordSchema = z.object({
 export const createHPRecordSchema = z.object({
   business_id: z.number().positive(),
   type: z.literal('hp'),
-  category: z
-    .string()
-    .min(1)
-    .max(50)
-    .default('bulk_purchase'),
+  category: z.string().min(1).max(50).default('bulk_purchase'),
   amount: z.number().positive('Amount must be positive'),
   transaction_date: z.coerce.date(),
   items: z.array(recordItemSchema).optional(),
@@ -76,11 +68,7 @@ export const createHPRecordSchema = z.object({
 export const createCreditRecordSchema = z.object({
   business_id: z.number().positive(),
   type: z.literal('credit'),
-  category: z
-    .string()
-    .min(1)
-    .max(50)
-    .default('customer_credit'),
+  category: z.string().min(1).max(50).default('customer_credit'),
   amount: z.number().positive('Amount must be positive'),
   transaction_date: z.coerce.date(),
   credit_due_date: z.coerce.date().optional(),
@@ -95,11 +83,7 @@ export const createCreditRecordSchema = z.object({
 export const createInventoryRecordSchema = z.object({
   business_id: z.number().positive(),
   type: z.literal('inventory'),
-  category: z
-    .string()
-    .min(1)
-    .max(50)
-    .default('stock_purchase'),
+  category: z.string().min(1).max(50).default('stock_purchase'),
   amount: z.number().positive('Amount must be positive'),
   transaction_date: z.coerce.date(),
   items: z.array(recordItemSchema).optional(),
@@ -114,11 +98,7 @@ export const createInventoryRecordSchema = z.object({
 export const createExpenseRecordSchema = z.object({
   business_id: z.number().positive(),
   type: z.literal('expense'),
-  category: z
-    .string()
-    .min(1)
-    .max(50)
-    .default('operating_expense'),
+  category: z.string().min(1).max(50).default('operating_expense'),
   amount: z.number().positive('Amount must be positive'),
   transaction_date: z.coerce.date(),
   items: z.array(recordItemSchema).optional(),
@@ -141,17 +121,11 @@ export const createRecordSchema = z.union([
  * QUERY RECORDS SCHEMA
  */
 export const queryRecordsSchema = z.object({
-  type: z
-    .enum(['sales', 'hp', 'credit', 'inventory', 'expense'])
-    .optional(),
+  type: z.enum(['sales', 'hp', 'credit', 'inventory', 'expense']).optional(),
   payment_method: z.enum(['cash', 'mpesa']).optional(),
   start_date: z.coerce.date().optional(),
   end_date: z.coerce.date().optional(),
-  limit: z
-    .number()
-    .positive()
-    .max(500)
-    .default(100),
+  limit: z.number().positive().max(500).default(100),
   offset: z.number().nonnegative().default(0),
 });
 

@@ -276,9 +276,8 @@ export const getSpoilageAnalyticsHandler = async (req, res, next) => {
         break;
 
       case 'monthly_trend':
-        analytics.monthly_trend = await spoiledStockService.getMonthlySpoilageTrend(
-          biz
-        );
+        analytics.monthly_trend =
+          await spoiledStockService.getMonthlySpoilageTrend(biz);
         break;
 
       case 'top_spoiled':
@@ -289,10 +288,8 @@ export const getSpoilageAnalyticsHandler = async (req, res, next) => {
         break;
 
       case 'highest_loss':
-        analytics.highest_loss = await spoiledStockService.getHighestLossProducts(
-          biz,
-          limit
-        );
+        analytics.highest_loss =
+          await spoiledStockService.getHighestLossProducts(biz, limit);
         break;
 
       case 'spoilage_rate':

@@ -18,7 +18,7 @@ jobs:
   test:
     name: Run Tests
     runs-on: ubuntu-latest
-    
+
     services:
       postgres:
         image: postgres:15-alpine
@@ -33,19 +33,19 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
-    
+
     steps:
       - uses: actions/checkout@v3
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 18.x
           cache: npm
-      
+
       - name: Install dependencies
         run: npm ci
-      
+
       - name: Run tests
         run: npm test
         env:
@@ -54,7 +54,7 @@ jobs:
           JWT_SECRET: test-secret-key-min-32-characters-long
           ARCJET_KEY: test-key
           MPESA_ENV: sandbox
-      
+
       - name: Check test results
         if: failure()
         run: exit 1
@@ -62,22 +62,22 @@ jobs:
   security-check:
     name: Security & Code Quality
     runs-on: ubuntu-latest
-    
+
     steps:
       - uses: actions/checkout@v3
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 18.x
           cache: npm
-      
+
       - name: Install dependencies
         run: npm ci
-      
+
       - name: Run linter
         run: npm run lint
-      
+
       - name: Check formatting
         run: npm run format:check
 
@@ -86,16 +86,16 @@ jobs:
     needs: [test, security-check]
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging'
-    
+
     steps:
       - uses: actions/checkout@v3
-      
+
       - name: Deploy to Render Staging
         run: |
           curl -X POST https://api.render.com/deploy/srv-${{ secrets.RENDER_STAGING_SERVICE_ID }}?key=${{ secrets.RENDER_API_KEY }}
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-      
+
       - name: Notify Slack - Staging
         uses: slackapi/slack-github-action@v1.24.0
         with:
@@ -121,10 +121,10 @@ jobs:
     needs: [test, security-check]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    
+
     steps:
       - uses: actions/checkout@v3
-      
+
       - name: Create Deployment
         uses: actions/github-script@v6
         id: deployment
@@ -140,13 +140,13 @@ jobs:
               description: 'PayMe API Production Deployment'
             });
             return deployment.data.id;
-      
+
       - name: Deploy to Render Production
         run: |
           curl -X POST https://api.render.com/deploy/srv-${{ secrets.RENDER_PRODUCTION_SERVICE_ID }}?key=${{ secrets.RENDER_API_KEY }}
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-      
+
       - name: Wait for deployment
         uses: actions/github-script@v6
         with:
@@ -164,7 +164,7 @@ jobs:
             if (!deployed) {
               throw new Error('Health check failed after deployment');
             }
-      
+
       - name: Create Deployment Status
         uses: actions/github-script@v6
         with:
@@ -177,7 +177,7 @@ jobs:
               environment_url: 'https://api.payme.app',
               description: 'Deployment successful'
             });
-      
+
       - name: Notify Slack - Production
         uses: slackapi/slack-github-action@v1.24.0
         with:
@@ -203,7 +203,7 @@ jobs:
     needs: [test, security-check]
     runs-on: ubuntu-latest
     if: failure()
-    
+
     steps:
       - name: Notify Slack - Failure
         uses: slackapi/slack-github-action@v1.24.0

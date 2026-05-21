@@ -134,7 +134,9 @@ export const verifyMpesaSignature = req => {
   // Extract signature from header
   const signature = req.get('X-M-Pesa-Signature');
   if (!signature) {
-    logger.warn('M-Pesa callback missing signature header');
+    logger.debug(
+      'M-pesa callback has no signature header(expected in sandbox)'
+    );
     return false;
   }
 
@@ -240,14 +242,21 @@ export const validateMpesaWebhook = () => {
       });
     }
 
-    // 3. Validate timestamp
-    const timestamp = req.body?.Body?.stkCallback?.TransactionTimestamp ||
-      req.body?.timestamp || null;
-    if (!isTimestampValid(timestamp)) {
-      logger.error('Webhook rejected: Invalid timestamp', {
-        requestIp,
-        timestamp,
-      });
+    // Transaction date lives inside callback metadata.item not
+    // not at skCallback level, so we need to extract it from there
+    const callbackItems =
+      req.body?.Body?.stkCallback?.CallbackMetadata?.Item || [];
+    const transactionDate = callbackItems.find(
+      item => item.Name === 'TransactionDate'
+    )?.Value;
+    const timestamp = transactionDate ? String(transactionDate) : null;
+
+    if (timestamp && !isTimestampValid(timestamp, 30 * 60 * 1000)) {
+      // Allow 30 minutes for potential clock skew
+      logger.warn(
+        'Webhook timestamp outside 30-minute window, potential replay attack',
+        { requestIp, timestamp }
+      );
       return res.status(200).json({
         status: 'rejected',
         reason: 'Invalid timestamp',

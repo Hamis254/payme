@@ -68,7 +68,7 @@ export const hppProtection = hpp({
  * @param {string} value - The value to sanitize
  * @returns {string} - Sanitized value
  */
-export const sanitizeString = (value) => {
+export const sanitizeString = value => {
   if (typeof value !== 'string') return value;
 
   // Remove XSS attempts with xss library
@@ -92,7 +92,7 @@ export const sanitizeString = (value) => {
  * @param {*} obj - The object to sanitize
  * @returns {*} - The sanitized object
  */
-export const deepSanitize = (obj) => {
+export const deepSanitize = obj => {
   if (typeof obj === 'string') {
     return sanitizeString(obj);
   }
@@ -162,7 +162,7 @@ export const responseHeaderSanitization = (req, res, next) => {
 export const cookieSecurity = (req, res, next) => {
   const originalCookie = res.cookie.bind(res);
 
-  res.cookie = function(name, val, options) {
+  res.cookie = function (name, val, options) {
     const cookieOptions = {
       ...options,
       httpOnly: true, // Prevent JS access
@@ -192,12 +192,12 @@ export const suspiciousActivityLogger = (req, res, next) => {
     /base64/i,
   ];
 
-  const checkValue = (value) => {
+  const checkValue = value => {
     if (typeof value !== 'string') return false;
     return suspiciousPatterns.some(pattern => pattern.test(value));
   };
 
-  const checkObj = (obj) => {
+  const checkObj = obj => {
     if (typeof obj === 'string') return checkValue(obj);
     if (Array.isArray(obj)) return obj.some(item => checkObj(item));
     if (obj && typeof obj === 'object') {
@@ -206,11 +206,7 @@ export const suspiciousActivityLogger = (req, res, next) => {
     return false;
   };
 
-  if (
-    checkObj(req.query) ||
-    checkObj(req.body) ||
-    checkObj(req.params)
-  ) {
+  if (checkObj(req.query) || checkObj(req.body) || checkObj(req.params)) {
     logger.warn('Suspicious XSS-like activity detected', {
       ip: req.ip,
       method: req.method,

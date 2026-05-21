@@ -1,7 +1,6 @@
 // reconciliation.service.js
 import { db, sql } from '#config/database.js';
 import { sales } from '#models/sales.model.js';
-import { payments } from '#models/payments.model.js';
 import { expenses } from '#models/expense.model.js';
 import { walletTransactions } from '#models/myWallet.model.js';
 import {
@@ -15,7 +14,7 @@ import logger from '#config/logger.js';
 /**
  * Get or create reconciliation config for a business
  */
-export const getReconciliationConfig = async (businessId) => {
+export const getReconciliationConfig = async businessId => {
   try {
     let [config] = await db
       .select()
@@ -75,7 +74,8 @@ export const updateReconciliationConfig = async (businessId, updates) => {
  */
 export const calculateSystemCash = async (businessId, startDate, endDate) => {
   try {
-    // Get cash sales total
+    // Use sales as canonical source to avoid double counting sales+payments.
+    // payments are linked to sales and should not be added separately here.
     const cashSales = await db
       .select({
         total: sql`COALESCE(SUM(CAST(${sales.total_amount} AS DECIMAL)), 0)`,
@@ -88,22 +88,6 @@ export const calculateSystemCash = async (businessId, startDate, endDate) => {
           eq(sales.status, 'completed'),
           gte(sales.created_at, new Date(startDate)),
           lte(sales.created_at, new Date(endDate))
-        )
-      );
-
-    // Get cash payments received
-    const cashPayments = await db
-      .select({
-        total: sql`COALESCE(SUM(CAST(${payments.amount} AS DECIMAL)), 0)`,
-      })
-      .from(payments)
-      .innerJoin(sales, eq(payments.sale_id, sales.id))
-      .where(
-        and(
-          eq(sales.business_id, businessId),
-          eq(payments.status, 'success'),
-          gte(payments.created_at, new Date(startDate)),
-          lte(payments.created_at, new Date(endDate))
         )
       );
 
@@ -138,16 +122,15 @@ export const calculateSystemCash = async (businessId, startDate, endDate) => {
       );
 
     const salesTotal = Number(cashSales[0]?.total || 0);
-    const paymentsTotal = Number(cashPayments[0]?.total || 0);
     const expensesTotal = Number(cashExpenses[0]?.total || 0);
     const tokenChargesTotal = Number(tokenCharges[0]?.total || 0);
 
-    // System cash = sales + payments - expenses - token charges
-    const systemCash = salesTotal + paymentsTotal - expensesTotal - tokenChargesTotal;
+    // System cash = cash sales - cash expenses - token charges
+    const systemCash = salesTotal - expensesTotal - tokenChargesTotal;
 
     return {
       sales: salesTotal,
-      payments: paymentsTotal,
+      payments: 0,
       expenses: expensesTotal,
       tokenCharges: tokenChargesTotal,
       systemCash,
@@ -164,18 +147,21 @@ export const calculateSystemCash = async (businessId, startDate, endDate) => {
 export const createCashReconciliation = async (businessId, userId, data) => {
   try {
     const config = await getReconciliationConfig(businessId);
-    
+
     // Calculate system cash for the date
     const systemCashData = await calculateSystemCash(
       businessId,
       data.reconciliation_date,
-      new Date(new Date(data.reconciliation_date).getTime() + 24 * 60 * 60 * 1000)
+      new Date(
+        new Date(data.reconciliation_date).getTime() + 24 * 60 * 60 * 1000
+      )
     );
 
     const countedCash = Number(data.counted_cash);
     const systemCash = systemCashData.systemCash;
     const variance = countedCash - systemCash;
-    const variancePercent = systemCash !== 0 ? (variance / systemCash) * 100 : 0;
+    const variancePercent =
+      systemCash !== 0 ? (variance / systemCash) * 100 : 0;
 
     // Determine variance status
     let varianceStatus = 'approved';
@@ -223,22 +209,24 @@ export const createCashReconciliation = async (businessId, userId, data) => {
 export const getCashReconciliations = async (businessId, options = {}) => {
   try {
     const { limit = 30, offset = 0, startDate, endDate } = options;
+    const conditions = [eq(cashReconciliations.business_id, businessId)];
+    if (startDate) {
+      conditions.push(
+        gte(cashReconciliations.reconciliation_date, new Date(startDate))
+      );
+    }
+    if (endDate) {
+      conditions.push(
+        lte(cashReconciliations.reconciliation_date, new Date(endDate))
+      );
+    }
 
-    let query = db
+    const results = await db
       .select({
         reconciliation: cashReconciliations,
       })
       .from(cashReconciliations)
-      .where(eq(cashReconciliations.business_id, businessId));
-
-    if (startDate) {
-      query = query.where(gte(cashReconciliations.reconciliation_date, new Date(startDate)));
-    }
-    if (endDate) {
-      query = query.where(lte(cashReconciliations.reconciliation_date, new Date(endDate)));
-    }
-
-    const results = await query
+      .where(and(...conditions))
       .orderBy(desc(cashReconciliations.reconciliation_date))
       .limit(limit)
       .offset(offset);
@@ -253,7 +241,11 @@ export const getCashReconciliations = async (businessId, options = {}) => {
 /**
  * Approve a cash reconciliation
  */
-export const approveCashReconciliation = async (businessId, reconciliationId, approvedBy) => {
+export const approveCashReconciliation = async (
+  businessId,
+  reconciliationId,
+  approvedBy
+) => {
   try {
     const [reconciliation] = await db
       .select()
@@ -285,7 +277,9 @@ export const approveCashReconciliation = async (businessId, reconciliationId, ap
       .where(eq(cashReconciliations.id, reconciliationId))
       .returning();
 
-    logger.info(`Cash reconciliation ${reconciliationId} approved by user ${approvedBy}`);
+    logger.info(
+      `Cash reconciliation ${reconciliationId} approved by user ${approvedBy}`
+    );
     return updated;
   } catch (e) {
     logger.error('Error approving cash reconciliation', e);
@@ -296,7 +290,11 @@ export const approveCashReconciliation = async (businessId, reconciliationId, ap
 /**
  * Flag a cash reconciliation for investigation
  */
-export const flagCashReconciliation = async (businessId, reconciliationId, note) => {
+export const flagCashReconciliation = async (
+  businessId,
+  reconciliationId,
+  note
+) => {
   try {
     const [updated] = await db
       .update(cashReconciliations)
@@ -313,7 +311,9 @@ export const flagCashReconciliation = async (businessId, reconciliationId, note)
       )
       .returning();
 
-    logger.info(`Cash reconciliation ${reconciliationId} flagged for investigation`);
+    logger.info(
+      `Cash reconciliation ${reconciliationId} flagged for investigation`
+    );
     return updated;
   } catch (e) {
     logger.error('Error flagging cash reconciliation', e);
@@ -324,9 +324,13 @@ export const flagCashReconciliation = async (businessId, reconciliationId, note)
 /**
  * Calculate M-Pesa transactions for a period
  */
-export const calculateMpesaTransactions = async (businessId, startDate, endDate) => {
+export const calculateMpesaTransactions = async (
+  businessId,
+  startDate,
+  endDate
+) => {
   try {
-    // Get M-Pesa payments from sales
+    // Use sales as canonical source to avoid double counting with payments.
     const mpesaSales = await db
       .select({
         count: sql`COUNT(*)`,
@@ -343,35 +347,16 @@ export const calculateMpesaTransactions = async (businessId, startDate, endDate)
         )
       );
 
-    // Get M-Pesa payments
-    const mpesaPayments = await db
-      .select({
-        count: sql`COUNT(*)`,
-        total: sql`COALESCE(SUM(CAST(${payments.amount} AS DECIMAL)), 0)`,
-      })
-      .from(payments)
-      .innerJoin(sales, eq(payments.sale_id, sales.id))
-      .where(
-        and(
-          eq(sales.business_id, businessId),
-          eq(payments.status, 'success'),
-          gte(payments.created_at, new Date(startDate)),
-          lte(payments.created_at, new Date(endDate))
-        )
-      );
-
     const salesCount = Number(mpesaSales[0]?.count || 0);
     const salesTotal = Number(mpesaSales[0]?.total || 0);
-    const paymentsCount = Number(mpesaPayments[0]?.count || 0);
-    const paymentsTotal = Number(mpesaPayments[0]?.total || 0);
 
     return {
       salesCount,
       salesTotal,
-      paymentsCount,
-      paymentsTotal,
-      totalTransactions: salesCount + paymentsCount,
-      totalAmount: salesTotal + paymentsTotal,
+      paymentsCount: 0,
+      paymentsTotal: 0,
+      totalTransactions: salesCount,
+      totalAmount: salesTotal,
     };
   } catch (e) {
     logger.error('Error calculating M-Pesa transactions', e);
@@ -404,7 +389,8 @@ export const createMpesaReconciliation = async (businessId, userId, data) => {
     // Determine status
     let status = 'matched';
     const threshold = Number(config.mpesa_variance_threshold);
-    const variancePercent = systemAmount !== 0 ? (varianceAmount / systemAmount) * 100 : 0;
+    const variancePercent =
+      systemAmount !== 0 ? (varianceAmount / systemAmount) * 100 : 0;
 
     if (Math.abs(variancePercent) > threshold || varianceTransactions !== 0) {
       status = 'investigation_needed';
@@ -471,7 +457,7 @@ export const getMpesaReconciliations = async (businessId, options = {}) => {
 /**
  * Get reconciliation summary for dashboard
  */
-export const getReconciliationSummary = async (businessId) => {
+export const getReconciliationSummary = async businessId => {
   try {
     // Get recent cash reconciliations
     const recentCash = await db

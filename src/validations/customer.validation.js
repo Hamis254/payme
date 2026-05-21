@@ -17,11 +17,7 @@ export const createCustomerSchema = z.object({
     .optional()
     .nullable(),
 
-  email: z
-    .string()
-    .email('Invalid email format')
-    .optional()
-    .nullable(),
+  email: z.string().email('Invalid email format').optional().nullable(),
 
   address: z
     .string()
@@ -55,11 +51,7 @@ export const updateCustomerSchema = z.object({
     .optional()
     .nullable(),
 
-  email: z
-    .string()
-    .email('Invalid email format')
-    .optional()
-    .nullable(),
+  email: z.string().email('Invalid email format').optional().nullable(),
 
   address: z
     .string()
@@ -67,9 +59,7 @@ export const updateCustomerSchema = z.object({
     .optional()
     .nullable(),
 
-  customer_type: z
-    .enum(['walk_in', 'regular', 'vip', 'wholesale'])
-    .optional(),
+  customer_type: z.enum(['walk_in', 'regular', 'vip', 'wholesale']).optional(),
 
   prefer_sms: z.boolean().optional(),
   prefer_email: z.boolean().optional(),
@@ -108,9 +98,7 @@ export const updatePreferencesSchema = z.object({
     })
     .optional(),
 
-  preferred_payment: z
-    .enum(['cash', 'mpesa', 'credit'])
-    .optional(),
+  preferred_payment: z.enum(['cash', 'mpesa', 'credit']).optional(),
 
   best_contact_time: z
     .string()
@@ -145,10 +133,7 @@ export const customerListSchema = z.object({
     .default('created_at')
     .optional(),
 
-  sort_order: z
-    .enum(['asc', 'desc'])
-    .default('desc')
-    .optional(),
+  sort_order: z.enum(['asc', 'desc']).default('desc').optional(),
 
   filter_type: z
     .enum(['walk_in', 'regular', 'vip', 'wholesale'])

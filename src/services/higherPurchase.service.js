@@ -33,7 +33,8 @@ export async function createAgreement(data) {
       createdBy,
     } = data;
 
-    const totalAmount = parseFloat(principalAmount) * (1 + parseFloat(interestRate) / 100);
+    const totalAmount =
+      parseFloat(principalAmount) * (1 + parseFloat(interestRate) / 100);
     const amountFinanced = totalAmount - parseFloat(downPayment);
 
     // Create agreement in transaction with installments
@@ -159,27 +160,32 @@ export async function getAgreementById(agreementId) {
  */
 export async function listAgreements(params) {
   try {
-    const { businessId, status, startDate, endDate, limit = 50, offset = 0 } = params;
+    const {
+      businessId,
+      status,
+      startDate,
+      endDate,
+      limit = 50,
+      offset = 0,
+    } = params;
 
-    let query = db
-      .select()
-      .from(hirePurchaseAgreements)
-      .where(eq(hirePurchaseAgreements.business_id, businessId));
+    const conditions = [eq(hirePurchaseAgreements.business_id, businessId)];
 
     if (status) {
-      query = query.where(eq(hirePurchaseAgreements.status, status));
+      conditions.push(eq(hirePurchaseAgreements.status, status));
     }
 
     if (startDate && endDate) {
-      query = query.where(
-        and(
-          gte(hirePurchaseAgreements.agreement_date, new Date(startDate)),
-          lte(hirePurchaseAgreements.agreement_date, new Date(endDate))
-        )
+      conditions.push(
+        gte(hirePurchaseAgreements.agreement_date, new Date(startDate)),
+        lte(hirePurchaseAgreements.agreement_date, new Date(endDate))
       );
     }
 
-    const results = await query
+    const results = await db
+      .select()
+      .from(hirePurchaseAgreements)
+      .where(and(...conditions))
       .orderBy(desc(hirePurchaseAgreements.agreement_date))
       .limit(limit)
       .offset(offset);
@@ -270,7 +276,10 @@ export async function recordInstallmentPayment(data) {
         .set({
           balance_remaining: newBalance.toString(),
           installments_paid: newInstallmentsPaid,
-          status: newInstallmentsPaid === agreement.number_of_installments ? 'completed' : 'active',
+          status:
+            newInstallmentsPaid === agreement.number_of_installments
+              ? 'completed'
+              : 'active',
           updated_at: new Date(),
         })
         .where(eq(hirePurchaseAgreements.id, agreementId))
@@ -351,7 +360,9 @@ export async function getOverdueInstallments(businessId) {
 export async function getUpcomingInstallments(businessId, daysAhead = 30) {
   try {
     const today = new Date();
-    const futureDate = new Date(today.getTime() + daysAhead * 24 * 60 * 60 * 1000);
+    const futureDate = new Date(
+      today.getTime() + daysAhead * 24 * 60 * 60 * 1000
+    );
 
     const result = await db
       .select({

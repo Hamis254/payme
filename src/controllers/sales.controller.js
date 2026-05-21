@@ -3,10 +3,8 @@ import { db } from '#config/database.js';
 import { eq, and, desc } from 'drizzle-orm';
 import { formatValidationError } from '#utils/format.js';
 import { initiateBusinessPayment } from '#utils/mpesa.js';
-import { deductTokens } from '#middleware/revenueGuard.middleware.js';
 import { getPaymentConfig } from '#services/paymentConfig.service.js';
 import {
-  createSaleSchema,
   payMpesaSchema,
   mpesaCallbackSchema,
 } from '#validations/sales.validation.js';
@@ -15,207 +13,22 @@ import { payments } from '#models/payments.model.js';
 import { wallets, walletTransactions } from '#models/myWallet.model.js';
 import { businesses } from '#models/setting.model.js';
 import { stockMovements } from '#models/stock.model.js';
-import {
-  deductStockFIFO,
-  checkStockAvailability,
-} from '#services/stock.service.js';
+import { deductStockFIFO } from '#services/stock.service.js';
+import { createRecord } from '#services/record.service.js';
 
-// ============ CREATE SALE ============
+/**
+ * NOTE: createSaleHandler has been retired.
+ * POST /api/payme/ is now the sole entry point for all sale creation.
+ * This controller handles: cash confirmation, M-Pesa STK, M-Pesa callback,
+ * sale queries, and cancellation only.
+ */
 
-export const createSaleHandler = async (req, res, next) => {
-  try {
-    if (!req.user) {
-      return res.status(401).json({ error: 'Authentication required' });
-    }
-
-    const validationResult = createSaleSchema.safeParse(req.body);
-    if (!validationResult.success) {
-      return res.status(400).json({
-        error: 'Validation failed',
-        details: formatValidationError(validationResult.error),
-      });
-    }
-
-    const { businessId, customerName, paymentMode, items, customerType, note } =
-      validationResult.data;
-    const tokenFee = 1;
-    let saleId;
-
-    // Verify business ownership
-    const [business] = await db
-      .select()
-      .from(businesses)
-      .where(
-        and(eq(businesses.id, businessId), eq(businesses.user_id, req.user.id))
-      )
-      .limit(1);
-
-    if (!business) {
-      return res
-        .status(403)
-        .json({ error: 'Business not found or access denied' });
-    }
-
-    // Check stock availability for all items
-    for (const item of items) {
-      const availability = await checkStockAvailability(
-        item.product_id,
-        item.quantity
-      );
-      if (!availability.available) {
-        return res.status(400).json({
-          error: `Insufficient stock for product ID ${item.product_id}`,
-          available: availability.total_available,
-          requested: item.quantity,
-        });
-      }
-    }
-
-    // Calculate totals
-    const totalAmount = items.reduce(
-      (sum, it) => sum + Number(it.quantity) * Number(it.unit_price),
-      0
-    );
-    const totalProfit = items.reduce((sum, it) => {
-      const cost = Number(it.unit_cost || 0);
-      return sum + Number(it.quantity) * (Number(it.unit_price) - cost);
-    }, 0);
-
-    await db.transaction(async tx => {
-      // Check wallet balance
-      const [wallet] = await tx
-        .select()
-        .from(wallets)
-        .where(eq(wallets.business_id, businessId))
-        .limit(1);
-
-      if (!wallet || wallet.balance_tokens < tokenFee) {
-        throw new Error('Insufficient tokens. Please top up your wallet.');
-      }
-
-      // Reserve token
-      await tx.insert(walletTransactions).values({
-        business_id: businessId,
-        change_tokens: -tokenFee,
-        type: 'reserve',
-        reference: null,
-        note: 'Sale token reservation',
-        created_at: new Date(),
-      });
-
-      await tx
-        .update(wallets)
-        .set({
-          balance_tokens: wallet.balance_tokens - tokenFee,
-          updated_at: new Date(),
-        })
-        .where(eq(wallets.id, wallet.id));
-
-      // Create sale
-      const [sale] = await tx
-        .insert(sales)
-        .values({
-          business_id: businessId,
-          total_amount: String(totalAmount.toFixed(2)),
-          total_profit: String(totalProfit.toFixed(2)),
-          payment_mode: paymentMode,
-          token_fee: tokenFee,
-          status: 'pending',
-          payment_status: 'pending',
-          customer_type: customerType || 'walk_in',
-          customer_name: customerName || null,
-          note: note || null,
-          created_at: new Date(),
-          updated_at: new Date(),
-        })
-        .returning();
-
-      saleId = sale.id;
-
-      // Insert sale items
-      for (const item of items) {
-        await tx.insert(saleItems).values({
-          sale_id: saleId,
-          product_id: item.product_id,
-          quantity: String(item.quantity),
-          unit_price: String(item.unit_price),
-          total_price: String(
-            (Number(item.quantity) * Number(item.unit_price)).toFixed(2)
-          ),
-          unit_cost: String(item.unit_cost || 0),
-          profit: String(
-            (
-              Number(item.quantity) *
-              (Number(item.unit_price) - Number(item.unit_cost || 0))
-            ).toFixed(2)
-          ),
-          created_at: new Date(),
-        });
-      }
-    });
-
-    logger.info(`Sale ${saleId} created for business ${businessId}`);
-
-    // Token deduction from Revenue Guard system
-    // This is intentionally done after transaction commit for the Revenue Guard workflow
-    // If it fails, the reservation stays but won't be charged - user can retry
-    let tokenDeducted = false;
-    try {
-      await deductTokens(
-        req.revenueGuard.wallet_id,
-        req.revenueGuard.tokens_to_deduct,
-        {
-          sale_id: saleId,
-          business_id: businessId,
-          amount_kes: Number(totalAmount.toFixed(2)),
-          items_count: items.length,
-        }
-      );
-      tokenDeducted = true;
-      logger.info(`Token deduction completed for sale ${saleId}`, {
-        walletId: req.revenueGuard.wallet_id,
-        tokens: req.revenueGuard.tokens_to_deduct,
-      });
-    } catch (deductError) {
-      logger.error('Token deduction failed for sale - reservation kept for retry', {
-        sale_id: saleId,
-        error: deductError.message,
-        walletId: req.revenueGuard.wallet_id,
-      });
-      // Don't throw - sale was created successfully
-      // The token reservation remains and can be charged later or user can retry
-    }
-
-    res.status(201).json({
-      message: tokenDeducted 
-        ? 'Sale created and token deducted successfully'
-        : 'Sale created successfully - token deduction pending',
-      saleId,
-      totalAmount: Number(totalAmount.toFixed(2)),
-      tokenFee: req.revenueGuard.tokens_to_deduct,
-      tokens_remaining: tokenDeducted 
-        ? req.revenueGuard.balance_before - req.revenueGuard.tokens_to_deduct
-        : req.revenueGuard.balance_before,
-      token_deduction_status: tokenDeducted ? 'completed' : 'pending',
-      request_id: req.revenueGuard.request_id,
-    });
-  } catch (e) {
-    logger.error('Error creating sale', e);
-    // Note: Token reservation is NOT automatically refunded here
-    // If deduction failed, the reservation remains pending
-    // User can retry deduction or the reservation will eventually timeout
-    if (e.message === 'Insufficient tokens. Please top up your wallet.') {
-      return res.status(402).json({
-        error: 'Insufficient tokens',
-        message: e.message,
-        request_id: req.revenueGuard?.request_id,
-      });
-    }
-    next(e);
-  }
-};
-
-// ============ PAY WITH CASH ============
+// ─────────────────────────────────────────────
+// PAY WITH CASH
+// POST /api/sales/:id/pay/cash
+// Only called if a sale was left in pending state and needs manual cash confirmation.
+// For normal PayMe cash sales this is handled directly in processPayMe.
+// ─────────────────────────────────────────────
 
 export const payCashHandler = async (req, res, next) => {
   try {
@@ -228,33 +41,55 @@ export const payCashHandler = async (req, res, next) => {
       return res.status(400).json({ error: 'Invalid sale ID' });
     }
 
+    let completedSale;
+    let completedItems;
+
     await db.transaction(async tx => {
-      // Get sale with business verification
-      const [sale] = await tx
-        .select({
-          sale: sales,
-          business: businesses,
-        })
+      // Verify sale belongs to this user's business
+      const [row] = await tx
+        .select({ sale: sales, business: businesses })
         .from(sales)
         .innerJoin(businesses, eq(sales.business_id, businesses.id))
         .where(and(eq(sales.id, saleId), eq(businesses.user_id, req.user.id)))
         .limit(1);
 
-      if (!sale) throw new Error('Sale not found or access denied');
-      if (sale.sale.status !== 'pending')
-        throw new Error('Sale is not pending');
+      if (!row) throw new Error('Sale not found or access denied');
+      if (row.sale.status !== 'pending') throw new Error('Sale is not pending');
 
-      // Get sale items and deduct stock
       const items = await tx
         .select()
         .from(saleItems)
         .where(eq(saleItems.sale_id, saleId));
 
+      // Deduct stock using FIFO and backfill unit_cost + profit on saleItems
       for (const item of items) {
         const deduction = await deductStockFIFO(
           item.product_id,
-          Number(item.quantity)
+          Number(item.quantity),
+          tx
         );
+
+        const totalCost = deduction.deductions.reduce(
+          (sum, d) => sum + d.total_cost,
+          0
+        );
+        const unitCost =
+          Number(item.quantity) > 0 ? totalCost / Number(item.quantity) : 0;
+        const realProfit = Number(item.total_price) - totalCost;
+
+        // Update saleItem with real FIFO cost
+        await tx
+          .update(saleItems)
+          .set({
+            unit_cost: String(Number(unitCost.toFixed(4))),
+            profit: String(Number(realProfit.toFixed(2))),
+          })
+          .where(
+            and(
+              eq(saleItems.sale_id, saleId),
+              eq(saleItems.product_id, item.product_id)
+            )
+          );
 
         // Log stock movements
         for (const d of deduction.deductions) {
@@ -266,11 +101,22 @@ export const payCashHandler = async (req, res, next) => {
             unit_cost: String(d.unit_cost),
             reference_type: 'sale',
             reference_id: saleId,
-            reason: `Sale #${saleId}`,
+            reason: `Cash sale #${saleId} - FIFO batch ${d.batch_id}`,
             created_at: new Date(),
           });
         }
       }
+
+      // Recalculate total profit from updated items
+      const updatedItems = await tx
+        .select()
+        .from(saleItems)
+        .where(eq(saleItems.sale_id, saleId));
+
+      const realTotalProfit = updatedItems.reduce(
+        (sum, i) => sum + Number(i.profit || 0),
+        0
+      );
 
       // Mark sale completed
       await tx
@@ -278,7 +124,8 @@ export const payCashHandler = async (req, res, next) => {
         .set({
           status: 'completed',
           payment_status: 'success',
-          amount_paid: sale.sale.total_amount,
+          amount_paid: row.sale.total_amount,
+          total_profit: String(Number(realTotalProfit.toFixed(2))),
           updated_at: new Date(),
         })
         .where(eq(sales.id, saleId));
@@ -286,23 +133,50 @@ export const payCashHandler = async (req, res, next) => {
       // Create payment record
       await tx.insert(payments).values({
         sale_id: saleId,
-        amount: sale.sale.total_amount,
+        amount: row.sale.total_amount,
         status: 'success',
         created_at: new Date(),
       });
 
-      // Charge token
-      await tx.insert(walletTransactions).values({
-        business_id: sale.sale.business_id,
-        change_tokens: 0,
-        type: 'charge',
-        reference: String(saleId),
-        note: 'Sale completed - token charged',
-        created_at: new Date(),
-      });
+      // Fetch completed sale + items for ledger write (outside tx to get updated values)
+      completedSale = {
+        ...row.sale,
+        status: 'completed',
+        payment_mode: 'cash',
+      };
+      completedItems = updatedItems;
     });
 
     logger.info(`Cash payment completed for sale ${saleId}`);
+
+    // Write to financial ledger — token deducted here via createRecord()
+    try {
+      await createRecord({
+        business_id: completedSale.business_id,
+        user_id: req.user.id,
+        type: 'sales',
+        category: 'cash',
+        amount: Number(completedSale.total_amount),
+        payment_method: 'cash',
+        transaction_date: new Date(),
+        reference_id: String(saleId),
+        description: `Cash sale #${saleId}`,
+        items: completedItems.map(item => ({
+          item_name: item.product_name || `Product #${item.product_id}`,
+          quantity: Number(item.quantity),
+          unit_price: Number(item.unit_price),
+          product_id: item.product_id,
+          cost_per_unit: item.unit_cost ? Number(item.unit_cost) : null,
+        })),
+      });
+    } catch (recordError) {
+      // Non-fatal: sale succeeded, log for backfill
+      logger.error('Failed to write cash sale to ledger', {
+        sale_id: saleId,
+        error: recordError.message,
+      });
+    }
+
     res.json({ message: 'Payment completed successfully', saleId });
   } catch (e) {
     logger.error('Error processing cash payment', e);
@@ -316,7 +190,11 @@ export const payCashHandler = async (req, res, next) => {
   }
 };
 
-// ============ PAY WITH M-PESA ============
+// ─────────────────────────────────────────────
+// INITIATE M-PESA STK PUSH
+// POST /api/sales/:id/pay/mpesa
+// Called after a pending M-Pesa sale is created via PayMe
+// ─────────────────────────────────────────────
 
 export const payMpesaHandler = async (req, res, next) => {
   try {
@@ -336,122 +214,78 @@ export const payMpesaHandler = async (req, res, next) => {
 
     const { phone, description } = validationResult.data;
 
-    // Get sale with business verification
-    const [sale] = await db
-      .select({
-        sale: sales,
-        business: businesses,
-      })
+    // Verify sale belongs to this user
+    const [row] = await db
+      .select({ sale: sales, business: businesses })
       .from(sales)
       .innerJoin(businesses, eq(sales.business_id, businesses.id))
       .where(and(eq(sales.id, saleId), eq(businesses.user_id, req.user.id)))
       .limit(1);
 
-    if (!sale) {
+    if (!row) {
       return res.status(404).json({ error: 'Sale not found or access denied' });
     }
-    if (sale.sale.status !== 'pending') {
+    if (row.sale.status !== 'pending') {
       return res.status(400).json({ error: 'Sale is not pending' });
     }
 
-    // Get business payment configuration
-    const paymentConfig = await getPaymentConfig(sale.business_id);
+    // Get business M-Pesa config
+    const paymentConfig = await getPaymentConfig(row.sale.business_id);
 
-    // VALIDATION 1: Config exists
     if (!paymentConfig) {
-      logger.warn('Payment config not found for M-Pesa sale', {
-        saleId,
-        businessId: sale.business_id,
-        userId: req.user.id,
-      });
       return res.status(400).json({
         error: 'Payment configuration not found',
-        hint: 'Please setup your M-Pesa payment method',
-        setupUrl: '/api/payment-config/setup',
+        message: 'Please set up your M-Pesa till or paybill in Settings.',
+        setup_url: '/api/payment-config/fields?method=paybill',
       });
     }
 
-    // VALIDATION 2: Config is active
     if (!paymentConfig.is_active) {
-      logger.warn('Payment config inactive for M-Pesa sale', {
-        saleId,
-        configId: paymentConfig.id,
-      });
       return res.status(400).json({
         error: 'Payment configuration is inactive',
-        hint: 'Please enable your M-Pesa configuration in settings',
+        message: 'Please activate your M-Pesa configuration in Settings.',
       });
     }
 
-    // VALIDATION 3: Config is complete
-    if (!paymentConfig.shortcode || !paymentConfig.passkey || !paymentConfig.account_reference) {
-      logger.error('Payment config incomplete for M-Pesa sale', {
-        saleId,
-        configId: paymentConfig.id,
-      });
-      return res.status(500).json({
+    if (!paymentConfig.shortcode || !paymentConfig.passkey) {
+      return res.status(400).json({
         error: 'Payment configuration is incomplete',
-        hint: 'Please reconfigure your M-Pesa credentials',
+        message: 'Please reconfigure your M-Pesa credentials in Settings.',
       });
     }
 
-    // VALIDATION 4: Config verified (warn if not)
-    if (!paymentConfig.verified) {
-      logger.warn('Payment config not verified for M-Pesa sale', {
-        saleId,
-        configId: paymentConfig.id,
-      });
-    }
-
-    // Initiate STK push using business's payment config
+    // Initiate STK push to customer's phone
     let mpesaResp;
     try {
       mpesaResp = await initiateBusinessPayment({
         paymentConfig,
         phone,
-        amount: Number(sale.sale.total_amount),
+        amount: Number(row.sale.total_amount),
         description: description || `PAYME Sale #${saleId}`,
       });
     } catch (mpesaError) {
-      logger.error('M-Pesa initialization failed for sale', {
+      logger.error('M-Pesa STK push failed', {
         saleId,
         error: mpesaError.message,
-        configId: paymentConfig.id,
       });
-
-      // Provide helpful error messages
-      if (mpesaError.message.includes('credentials') || mpesaError.message.includes('Configuration')) {
-        return res.status(400).json({
-          error: 'Payment credentials are invalid or not configured',
-          hint: 'Please verify your M-Pesa credentials in settings',
-        });
-      }
-
-      if (mpesaError.message.includes('inactive')) {
-        return res.status(400).json({
-          error: 'Payment method is inactive',
-          hint: 'Please activate your payment configuration',
-        });
-      }
-
       return res.status(500).json({
-        error: 'Failed to initiate payment',
+        error: 'Failed to initiate M-Pesa payment',
         message: mpesaError.message,
       });
     }
 
-    // Store payment initiation
+    // Store payment initiation record
     await db.insert(payments).values({
       sale_id: saleId,
       stk_request_id: mpesaResp.CheckoutRequestID || null,
       phone,
-      amount: sale.sale.total_amount,
+      amount: row.sale.total_amount,
       status: 'initiated',
       callback_payload: JSON.stringify(mpesaResp),
       created_at: new Date(),
     });
 
-    // Update sale
+    // Update sale with STK request ID
     await db
       .update(sales)
       .set({
@@ -463,11 +297,10 @@ export const payMpesaHandler = async (req, res, next) => {
 
     logger.info(`M-Pesa STK initiated for sale ${saleId}`, {
       checkoutRequestId: mpesaResp.CheckoutRequestID,
-      configId: paymentConfig.id,
-      verified: paymentConfig.verified,
     });
+
     res.json({
-      message: 'M-Pesa payment initiated',
+      message: 'M-Pesa payment initiated. Customer will receive a prompt.',
       saleId,
       checkoutRequestId: mpesaResp.CheckoutRequestID,
     });
@@ -475,22 +308,18 @@ export const payMpesaHandler = async (req, res, next) => {
     logger.error('Error initiating M-Pesa payment', {
       error: e.message,
       saleId: req.params.id,
-      userId: req.user?.id,
     });
     next(e);
   }
 };
 
-// ============ M-PESA CALLBACK ============
+// ─────────────────────────────────────────────
+// M-PESA CALLBACK HANDLER
+// POST /api/sales/mpesa/callback
+// Called by Safaricom after STK push — public endpoint
+// Returns 200 always to prevent Safaricom retries
+// ─────────────────────────────────────────────
 
-/**
- * M-Pesa STK Push Callback Handler
- * Processes payment confirmations from M-Pesa with idempotency
- * - Validates callback structure
- * - Checks for duplicate processing
- * - Updates sale and stock atomically
- * - Refunds tokens on payment failure
- */
 export const mpesaCallbackHandler = async (req, res) => {
   const callbackId = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
 
@@ -498,17 +327,13 @@ export const mpesaCallbackHandler = async (req, res) => {
     // Validate callback structure
     const validationResult = mpesaCallbackSchema.safeParse(req.body);
     if (!validationResult.success) {
-      logger.warn('Invalid M-Pesa callback payload', {
-        callbackId,
-        errors: validationResult.error,
-      });
-      // Return 200 OK to M-Pesa to acknowledge receipt, even if invalid
+      logger.warn('Invalid M-Pesa callback payload', { callbackId });
       return res.status(200).json({ status: 'ignored', callbackId });
     }
 
     const stkCallback = req.body.Body?.stkCallback;
     if (!stkCallback) {
-      logger.warn('Missing stkCallback in M-Pesa callback', { callbackId });
+      logger.warn('Missing stkCallback body', { callbackId });
       return res.status(200).json({ status: 'ignored', callbackId });
     }
 
@@ -519,7 +344,6 @@ export const mpesaCallbackHandler = async (req, res) => {
     } = stkCallback;
 
     if (!checkoutRequestId) {
-      logger.warn('Missing CheckoutRequestID in callback', { callbackId });
       return res.status(200).json({ status: 'ignored', callbackId });
     }
 
@@ -529,10 +353,8 @@ export const mpesaCallbackHandler = async (req, res) => {
       resultCode,
     });
 
-    // ============ ATOMICALLY PROCESS CALLBACK ============
-
     await db.transaction(async tx => {
-      // Get sale by STK request ID (with lock to prevent race conditions)
+      // Find sale by STK request ID
       const [sale] = await tx
         .select()
         .from(sales)
@@ -540,72 +362,105 @@ export const mpesaCallbackHandler = async (req, res) => {
         .limit(1);
 
       if (!sale) {
-        logger.warn('Sale not found for STK callback', {
+        logger.warn('No sale found for STK callback', {
           callbackId,
           checkoutRequestId,
         });
         return;
       }
 
-      // Idempotency check: if callback already processed, skip
-      if (sale.callback_processed) {
-        logger.info('Callback already processed, skipping', {
-          callbackId,
+      // Idempotency: skip if already processed
+      if (
+        sale.payment_status === 'success' ||
+        sale.payment_status === 'failed'
+      ) {
+        logger.info('Callback already processed — skipping', {
           saleId: sale.id,
+          callbackId,
         });
         return;
       }
 
-      // Parse M-Pesa callback metadata
-      const callbackMetadata = CallbackMetadata?.Item || [];
+      // Parse callback metadata
+      const metaItems = CallbackMetadata?.Item || [];
       const amount = Number(
-        callbackMetadata.find(i => i.Name === 'Amount')?.Value || sale.total_amount
+        metaItems.find(i => i.Name === 'Amount')?.Value || sale.total_amount
       );
       const mpesaReceiptNumber =
-        callbackMetadata.find(i => i.Name === 'MpesaReceiptNumber')?.Value || null;
+        metaItems.find(i => i.Name === 'MpesaReceiptNumber')?.Value || null;
       const phoneNumber =
-        callbackMetadata.find(i => i.Name === 'PhoneNumber')?.Value || null;
-      // Transaction date from callback (for audit trail)
-      callbackMetadata.find(i => i.Name === 'TransactionDate')?.Value || null;
+        metaItems.find(i => i.Name === 'PhoneNumber')?.Value?.toString() ||
+        null;
 
       if (resultCode === 0) {
-        // ============ PAYMENT SUCCESSFUL ============
-        logger.info('M-Pesa payment successful', {
-          saleId: sale.id,
-          amount,
-          receipt: mpesaReceiptNumber,
-        });
+        // ══════════════════════════════════════
+        // PAYMENT SUCCESSFUL
+        // ══════════════════════════════════════
 
-        // Get sale items and deduct stock using FIFO
+        // Fetch sale items for stock deduction + ledger
         const saleItemsList = await tx
           .select()
           .from(saleItems)
           .where(eq(saleItems.sale_id, sale.id));
 
+        // Deduct stock FIFO and backfill real unit_cost + profit on saleItems
         for (const item of saleItemsList) {
-          // Deduct stock in FIFO order
           const deduction = await deductStockFIFO(
             item.product_id,
-            Number(item.quantity)
+            Number(item.quantity),
+            tx
           );
 
-          // Log each batch deduction
-          for (const batch of deduction.deductions) {
+          const totalCost = deduction.deductions.reduce(
+            (sum, d) => sum + d.total_cost,
+            0
+          );
+          const unitCost =
+            Number(item.quantity) > 0 ? totalCost / Number(item.quantity) : 0;
+          const realProfit = Number(item.total_price) - totalCost;
+
+          // Backfill correct FIFO cost on saleItem row
+          await tx
+            .update(saleItems)
+            .set({
+              unit_cost: String(Number(unitCost.toFixed(4))),
+              profit: String(Number(realProfit.toFixed(2))),
+            })
+            .where(
+              and(
+                eq(saleItems.sale_id, sale.id),
+                eq(saleItems.product_id, item.product_id)
+              )
+            );
+
+          // Log stock movements
+          for (const d of deduction.deductions) {
             await tx.insert(stockMovements).values({
               product_id: item.product_id,
-              batch_id: batch.batch_id,
+              batch_id: d.batch_id,
               type: 'sale',
-              quantity_change: String(-batch.quantity),
-              unit_cost: String(batch.unit_cost),
+              quantity_change: String(-d.quantity),
+              unit_cost: String(d.unit_cost),
               reference_type: 'sale',
               reference_id: sale.id,
-              reason: `M-Pesa sale #${sale.id}`,
+              reason: `M-Pesa sale #${sale.id} - batch ${d.batch_id}`,
               created_at: new Date(),
             });
           }
         }
 
-        // Update sale with M-Pesa details
+        // Fetch updated items to recalculate total profit
+        const updatedItems = await tx
+          .select()
+          .from(saleItems)
+          .where(eq(saleItems.sale_id, sale.id));
+
+        const realTotalProfit = updatedItems.reduce(
+          (sum, i) => sum + Number(i.profit || 0),
+          0
+        );
+
+        // Mark sale completed
         await tx
           .update(sales)
           .set({
@@ -614,100 +469,139 @@ export const mpesaCallbackHandler = async (req, res) => {
             mpesa_transaction_id: mpesaReceiptNumber,
             mpesa_sender_phone: phoneNumber,
             amount_paid: String(amount.toFixed(2)),
-            callback_processed: true,
+            total_profit: String(Number(realTotalProfit.toFixed(2))),
             updated_at: new Date(),
           })
           .where(eq(sales.id, sale.id));
 
-        // Charge token for completed sale
+        // Update payment record
+        await tx
+          .update(payments)
+          .set({
+            status: 'success',
+            mpesa_transaction_id: mpesaReceiptNumber,
+            callback_payload: JSON.stringify(req.body),
+            updated_at: new Date(),
+          })
+          .where(eq(payments.stk_request_id, checkoutRequestId));
+
+        // Log charge event — balance was NOT pre-reserved
+        // createRecord() below handles the actual token deduction
         await tx.insert(walletTransactions).values({
           business_id: sale.business_id,
-          change_tokens: -sale.token_fee, // Negative because we're charging
+          change_tokens: 0,
           type: 'charge',
           reference: String(sale.id),
-          note: `Sale completed - M-Pesa ${mpesaReceiptNumber}`,
+          note: `M-Pesa sale #${sale.id} completed — ${mpesaReceiptNumber}`,
           created_at: new Date(),
           created_by: null,
         });
 
-        // Update wallet balance
-        const [wallet] = await tx
-          .select()
-          .from(wallets)
-          .where(eq(wallets.business_id, sale.business_id))
-          .limit(1);
-
-        if (wallet) {
-          await tx
-            .update(wallets)
-            .set({
-              balance_tokens: Math.max(0, wallet.balance_tokens - sale.token_fee),
-              updated_at: new Date(),
-            })
-            .where(eq(wallets.id, wallet.id));
-        }
-
-        logger.info('M-Pesa payment completed and sale finalized', {
+        logger.info('M-Pesa sale finalized', {
           saleId: sale.id,
-          stockDeducted: true,
-          tokenCharged: true,
+          receipt: mpesaReceiptNumber,
+          amount,
+          totalProfit: realTotalProfit,
         });
+
+        // Write to financial ledger — token deducted here via createRecord()
+        try {
+          await createRecord({
+            business_id: sale.business_id,
+            user_id: null, // system-generated via callback
+            type: 'sales',
+            category: 'mpesa',
+            amount,
+            payment_method: 'mpesa',
+            transaction_date: new Date(),
+            reference_id: String(sale.id),
+            description: `M-Pesa sale #${sale.id}`,
+            mpesa_data: {
+              mpesaReceiptNumber,
+              phoneNumber,
+            },
+            items: updatedItems.map(item => ({
+              item_name: item.product_name || `Product #${item.product_id}`,
+              quantity: Number(item.quantity),
+              unit_price: Number(item.unit_price),
+              product_id: item.product_id,
+              cost_per_unit: item.unit_cost ? Number(item.unit_cost) : null,
+            })),
+          });
+        } catch (recordError) {
+          // Non-fatal — sale succeeded, record can be backfilled
+          logger.error('Failed to write M-Pesa sale to ledger', {
+            sale_id: sale.id,
+            error: recordError.message,
+          });
+        }
       } else {
-        // ============ PAYMENT FAILED ============
+        // ══════════════════════════════════════
+        // PAYMENT FAILED
+        // ══════════════════════════════════════
         logger.warn('M-Pesa payment failed', {
           saleId: sale.id,
           resultCode,
+          callbackId,
         });
 
-        // Mark sale as failed
         await tx
           .update(sales)
           .set({
             status: 'failed',
             payment_status: 'failed',
-            callback_processed: true,
             updated_at: new Date(),
           })
           .where(eq(sales.id, sale.id));
 
-        // Refund reserved token
-        await tx.insert(walletTransactions).values({
-          business_id: sale.business_id,
-          change_tokens: sale.token_fee, // Positive because we're refunding
-          type: 'refund',
-          reference: String(sale.id),
-          note: `Payment failed (code: ${resultCode}) - token refunded`,
-          created_at: new Date(),
-          created_by: null,
-        });
+        await tx
+          .update(payments)
+          .set({
+            status: 'failed',
+            callback_payload: JSON.stringify(req.body),
+            updated_at: new Date(),
+          })
+          .where(eq(payments.stk_request_id, checkoutRequestId));
 
-        // Update wallet balance
-        const [wallet] = await tx
-          .select()
-          .from(wallets)
-          .where(eq(wallets.business_id, sale.business_id))
-          .limit(1);
+        // Refund reserved token if one was reserved
+        if (sale.token_fee > 0) {
+          const [wallet] = await tx
+            .select()
+            .from(wallets)
+            .where(eq(wallets.business_id, sale.business_id))
+            .limit(1);
 
-        if (wallet) {
-          await tx
-            .update(wallets)
-            .set({
-              balance_tokens: wallet.balance_tokens + sale.token_fee,
-              updated_at: new Date(),
-            })
-            .where(eq(wallets.id, wallet.id));
+          if (wallet) {
+            await tx.insert(walletTransactions).values({
+              business_id: sale.business_id,
+              change_tokens: sale.token_fee,
+              type: 'refund',
+              reference: String(sale.id),
+              note: `Payment failed (code: ${resultCode}) — token refunded`,
+              created_at: new Date(),
+              created_by: null,
+            });
+
+            await tx
+              .update(wallets)
+              .set({
+                balance_tokens: wallet.balance_tokens + sale.token_fee,
+                updated_at: new Date(),
+              })
+              .where(eq(wallets.id, wallet.id));
+          }
         }
 
-        logger.info('Payment failed - token refunded', {
+        logger.info('Payment failed — token refunded', {
           saleId: sale.id,
-          tokensRefunded: sale.token_fee,
+          resultCode,
         });
       }
     });
 
-    // Return 200 OK to M-Pesa
+    // Always return 200 to Safaricom to prevent retries
     return res.status(200).json({
-      message: 'callback processed',
+      message: 'Callback processed',
       callbackId,
       checkoutRequestId,
     });
@@ -717,16 +611,19 @@ export const mpesaCallbackHandler = async (req, res) => {
       error: error.message,
       stack: error.stack,
     });
-    // Return 200 OK to M-Pesa even on error to prevent retries
+    // Always 200 — prevents Safaricom from retrying endlessly
     return res.status(200).json({
-      status: 'error_processed',
+      status: 'error_logged',
       callbackId,
-      message: 'Error recorded, support will investigate',
+      message: 'Error recorded',
     });
   }
 };
 
-// ============ GET SALE ============
+// ─────────────────────────────────────────────
+// GET SINGLE SALE
+// GET /api/sales/:id
+// ─────────────────────────────────────────────
 
 export const getSaleHandler = async (req, res, next) => {
   try {
@@ -739,17 +636,14 @@ export const getSaleHandler = async (req, res, next) => {
       return res.status(400).json({ error: 'Invalid sale ID' });
     }
 
-    const [sale] = await db
-      .select({
-        sale: sales,
-        business: businesses,
-      })
+    const [row] = await db
+      .select({ sale: sales, business: businesses })
       .from(sales)
       .innerJoin(businesses, eq(sales.business_id, businesses.id))
       .where(and(eq(sales.id, saleId), eq(businesses.user_id, req.user.id)))
       .limit(1);
 
-    if (!sale) {
+    if (!row) {
       return res.status(404).json({ error: 'Sale not found or access denied' });
     }
 
@@ -757,16 +651,17 @@ export const getSaleHandler = async (req, res, next) => {
       .select()
       .from(saleItems)
       .where(eq(saleItems.sale_id, saleId));
-    const payment = await db
+
+    const [payment] = await db
       .select()
       .from(payments)
       .where(eq(payments.sale_id, saleId))
       .limit(1);
 
     res.json({
-      sale: sale.sale,
+      sale: row.sale,
       items,
-      payment: payment[0] || null,
+      payment: payment || null,
     });
   } catch (e) {
     logger.error('Error getting sale', e);
@@ -774,7 +669,10 @@ export const getSaleHandler = async (req, res, next) => {
   }
 };
 
-// ============ LIST SALES ============
+// ─────────────────────────────────────────────
+// LIST SALES FOR BUSINESS
+// GET /api/sales/business/:businessId
+// ─────────────────────────────────────────────
 
 export const listSalesHandler = async (req, res, next) => {
   try {
@@ -787,7 +685,7 @@ export const listSalesHandler = async (req, res, next) => {
       return res.status(400).json({ error: 'Invalid business ID' });
     }
 
-    // Verify business ownership
+    // Verify ownership
     const [business] = await db
       .select()
       .from(businesses)
@@ -818,7 +716,10 @@ export const listSalesHandler = async (req, res, next) => {
   }
 };
 
-// ============ CANCEL SALE ============
+// ─────────────────────────────────────────────
+// CANCEL PENDING SALE
+// POST /api/sales/:id/cancel
+// ─────────────────────────────────────────────
 
 export const cancelSaleHandler = async (req, res, next) => {
   try {
@@ -832,45 +733,45 @@ export const cancelSaleHandler = async (req, res, next) => {
     }
 
     await db.transaction(async tx => {
-      const [sale] = await tx
-        .select({
-          sale: sales,
-          business: businesses,
-        })
+      const [row] = await tx
+        .select({ sale: sales, business: businesses })
         .from(sales)
         .innerJoin(businesses, eq(sales.business_id, businesses.id))
         .where(and(eq(sales.id, saleId), eq(businesses.user_id, req.user.id)))
         .limit(1);
 
-      if (!sale) throw new Error('Sale not found or access denied');
-      if (sale.sale.status !== 'pending')
+      if (!row) throw new Error('Sale not found or access denied');
+      if (row.sale.status !== 'pending')
         throw new Error('Only pending sales can be cancelled');
 
-      // Refund token
-      const [wallet] = await tx
-        .select()
-        .from(wallets)
-        .where(eq(wallets.business_id, sale.sale.business_id))
-        .limit(1);
+      // Refund token if one was reserved
+      if (row.sale.token_fee > 0) {
+        const [wallet] = await tx
+          .select()
+          .from(wallets)
+          .where(eq(wallets.business_id, row.sale.business_id))
+          .limit(1);
 
-      await tx.insert(walletTransactions).values({
-        business_id: sale.sale.business_id,
-        change_tokens: sale.sale.token_fee,
-        type: 'refund',
-        reference: String(saleId),
-        note: 'Sale cancelled - token refund',
-        created_at: new Date(),
-      });
+        if (wallet) {
+          await tx.insert(walletTransactions).values({
+            business_id: row.sale.business_id,
+            change_tokens: row.sale.token_fee,
+            type: 'refund',
+            reference: String(saleId),
+            note: 'Sale cancelled — token refunded',
+            created_at: new Date(),
+          });
 
-      await tx
-        .update(wallets)
-        .set({
-          balance_tokens: wallet.balance_tokens + sale.sale.token_fee,
-          updated_at: new Date(),
-        })
-        .where(eq(wallets.id, wallet.id));
+          await tx
+            .update(wallets)
+            .set({
+              balance_tokens: wallet.balance_tokens + row.sale.token_fee,
+              updated_at: new Date(),
+            })
+            .where(eq(wallets.id, wallet.id));
+        }
+      }
 
-      // Mark sale as cancelled
       await tx
         .update(sales)
         .set({
@@ -881,7 +782,7 @@ export const cancelSaleHandler = async (req, res, next) => {
         .where(eq(sales.id, saleId));
     });
 
-    logger.info(`Sale ${saleId} cancelled`);
+    logger.info(`Sale ${saleId} cancelled by user ${req.user.id}`);
     res.json({ message: 'Sale cancelled successfully', saleId });
   } catch (e) {
     logger.error('Error cancelling sale', e);

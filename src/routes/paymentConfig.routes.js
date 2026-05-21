@@ -14,6 +14,8 @@ import {
   verifyPaymentConfigHandler,
 } from '#controllers/paymentConfig.controller.js';
 
+import { getPaymentConfigHandler } from '#controllers/paymentConfig.controller.js';
+
 const router = express.Router();
 
 // All routes require authentication
@@ -60,5 +62,9 @@ router.post('/:configId/toggle', togglePaymentConfig);
  * Tests credentials without creating actual transaction
  */
 router.post('/:configId/verify', verifyPaymentConfigHandler);
+
+// GET /api/payment-config/fields? method=paybill|till
+// Returns required fields for the specified payment method to guide frontend form rendering
+router.get('/fields', getPaymentConfigHandler);
 
 export default router;

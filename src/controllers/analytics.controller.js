@@ -48,7 +48,10 @@ export async function getDashboard(req, res, next) {
 
     const { period = 'daily' } = queryValidation.data;
 
-    const dashboardData = await analyticsService.getDashboardData(parseInt(businessId), period);
+    const dashboardData = await analyticsService.getDashboardData(
+      parseInt(businessId),
+      period
+    );
 
     return res.status(200).json({
       success: true,
@@ -87,7 +90,11 @@ export async function getSummary(req, res, next) {
     const [sales, profit, margin] = await Promise.all([
       analyticsService.getTotalSales(parseInt(businessId), startDate, endDate),
       analyticsService.getTotalProfit(parseInt(businessId), startDate, endDate),
-      analyticsService.getProfitMargin(parseInt(businessId), startDate, endDate),
+      analyticsService.getProfitMargin(
+        parseInt(businessId),
+        startDate,
+        endDate
+      ),
     ]);
 
     return res.status(200).json({
@@ -134,8 +141,18 @@ export async function getTopProducts(req, res, next) {
 
     const products =
       sortBy === 'profit'
-        ? await analyticsService.getTopProductsByProfit(parseInt(businessId), startDate, endDate, limit)
-        : await analyticsService.getTopProductsByRevenue(parseInt(businessId), startDate, endDate, limit);
+        ? await analyticsService.getTopProductsByProfit(
+          parseInt(businessId),
+          startDate,
+          endDate,
+          limit
+        )
+        : await analyticsService.getTopProductsByRevenue(
+          parseInt(businessId),
+          startDate,
+          endDate,
+          limit
+        );
 
     return res.status(200).json({
       success: true,
@@ -176,8 +193,16 @@ export async function getRevenueBreakdown(req, res, next) {
     const { startDate, endDate } = analyticsService.getDateRange(period);
 
     const [byPaymentMethod, byCustomerType] = await Promise.all([
-      analyticsService.getRevenueByPaymentMethod(parseInt(businessId), startDate, endDate),
-      analyticsService.getRevenueByCustomerType(parseInt(businessId), startDate, endDate),
+      analyticsService.getRevenueByPaymentMethod(
+        parseInt(businessId),
+        startDate,
+        endDate
+      ),
+      analyticsService.getRevenueByCustomerType(
+        parseInt(businessId),
+        startDate,
+        endDate
+      ),
     ]);
 
     return res.status(200).json({
@@ -216,7 +241,10 @@ export async function getSalesTrend(req, res, next) {
     await verifyBusinessOwnership(parseInt(businessId), req.user.id);
 
     const { daysBack = 30 } = queryValidation.data;
-    const trend = await analyticsService.getDailySalesTrend(parseInt(businessId), daysBack);
+    const trend = await analyticsService.getDailySalesTrend(
+      parseInt(businessId),
+      daysBack
+    );
 
     return res.status(200).json({
       success: true,
@@ -244,7 +272,9 @@ export async function getInventory(req, res, next) {
 
     await verifyBusinessOwnership(parseInt(businessId), req.user.id);
 
-    const inventory = await analyticsService.getInventoryValue(parseInt(businessId));
+    const inventory = await analyticsService.getInventoryValue(
+      parseInt(businessId)
+    );
 
     return res.status(200).json({
       success: true,
@@ -305,7 +335,11 @@ export async function getExpenses(req, res, next) {
     const { period = 'daily' } = queryValidation.data;
     const { startDate, endDate } = analyticsService.getDateRange(period);
 
-    const expenses = await analyticsService.getExpenseStats(parseInt(businessId), startDate, endDate);
+    const expenses = await analyticsService.getExpenseStats(
+      parseInt(businessId),
+      startDate,
+      endDate
+    );
 
     return res.status(200).json({
       success: true,
@@ -344,7 +378,11 @@ export async function getCustomers(req, res, next) {
     const { period = 'daily' } = queryValidation.data;
     const { startDate, endDate } = analyticsService.getDateRange(period);
 
-    const customers = await analyticsService.getCustomerStats(parseInt(businessId), startDate, endDate);
+    const customers = await analyticsService.getCustomerStats(
+      parseInt(businessId),
+      startDate,
+      endDate
+    );
 
     return res.status(200).json({
       success: true,

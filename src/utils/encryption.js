@@ -139,10 +139,13 @@ export const decrypt = (encryptedString, additionalData = '') => {
     return decrypted.toString('utf8');
   } catch (error) {
     // Authentication failed or corruption detected
-    logger.error('Decryption failed - possible data tampering or auth failure', {
-      error: error.message,
-      dataLength: encryptedString?.length || 0,
-    });
+    logger.error(
+      'Decryption failed - possible data tampering or auth failure',
+      {
+        error: error.message,
+        dataLength: encryptedString?.length || 0,
+      }
+    );
     throw new Error(`Decryption failed: ${error.message}`);
   }
 };
@@ -166,10 +169,7 @@ export const encryptFields = (data, fields, context = '') => {
 
   for (const field of fields) {
     if (result[field]) {
-      result[field] = encrypt(
-        result[field],
-        `${context}.${field}`
-      );
+      result[field] = encrypt(result[field], `${context}.${field}`);
     }
   }
 
@@ -189,10 +189,7 @@ export const decryptFields = (data, fields, context = '') => {
 
   for (const field of fields) {
     if (result[field]) {
-      result[field] = decrypt(
-        result[field],
-        `${context}.${field}`
-      );
+      result[field] = decrypt(result[field], `${context}.${field}`);
     }
   }
 

@@ -29,12 +29,12 @@ export const sales = pgTable('sales', {
   total_profit: decimal('total_profit', { precision: 12, scale: 2 }).notNull(),
 
   /* payment details */
-  payment_mode: varchar('payment_mode', { length: 20 }).notNull(), // 'cash' | 'mpesa'
-  token_fee: integer('token_fee').notNull().default(1), // tokens reserved/charged for this sale
+  payment_mode: varchar('payment_mode', { length: 20 }).notNull(), // cash | mpesa | credit | hire_purchase
+  token_fee: integer('token_fee').notNull().default(1),
 
   /* MPESA / STK reconciliation fields */
-  stk_request_id: varchar('stk_request_id', { length: 128 }), // CheckoutRequestID
-  mpesa_transaction_id: varchar('mpesa_transaction_id', { length: 128 }), // MpesaReceiptNumber
+  stk_request_id: varchar('stk_request_id', { length: 128 }),
+  mpesa_transaction_id: varchar('mpesa_transaction_id', { length: 128 }),
   mpesa_sender_name: varchar('mpesa_sender_name', { length: 255 }),
   mpesa_sender_phone: varchar('mpesa_sender_phone', { length: 20 }),
   amount_paid: decimal('amount_paid', { precision: 12, scale: 2 }),
@@ -44,11 +44,11 @@ export const sales = pgTable('sales', {
   callback_payload: text('callback_payload'),
 
   /* sale lifecycle and customer info */
-  status: varchar('status', { length: 20 }).notNull().default('pending'), // pending | completed | failed | refunded
+  status: varchar('status', { length: 20 }).notNull().default('pending'), // pending | completed | failed | cancelled
   customer_type: varchar('customer_type', { length: 20 })
     .notNull()
     .default('walk_in'), // walk_in | credit | hire_purchase
-  customer_id: integer('customer_id'), // optional FK to customers table (if exists)
+  customer_id: integer('customer_id'),
   customer_name: varchar('customer_name', { length: 255 }),
 
   note: text('note'),
@@ -61,7 +61,10 @@ export const sales = pgTable('sales', {
 /**
  * sale_items
  * - Line items for each sale
- * - Stores unit cost at time of sale for accurate profit calculation
+ * - Stores product_name at time of sale (survives product deletion/rename)
+ * - Stores unit_cost at time of sale for accurate FIFO profit calculation
+ * - For M-Pesa sales, unit_cost and profit are backfilled in the callback
+ *   after FIFO deduction runs on payment confirmation
  */
 export const saleItems = pgTable('sale_items', {
   id: serial('id').primaryKey(),
@@ -74,14 +77,20 @@ export const saleItems = pgTable('sale_items', {
     .notNull()
     .references(() => products.id, { onDelete: 'restrict' }),
 
+  // Product name captured at time of sale
+  // Ensures statement/ledger accuracy even if product is renamed or deleted
+  product_name: varchar('product_name', { length: 255 }).notNull().default(''),
+
   /* quantity and pricing */
   quantity: decimal('quantity', { precision: 12, scale: 3 }).notNull(),
   unit_price: decimal('unit_price', { precision: 12, scale: 2 }).notNull(),
   total_price: decimal('total_price', { precision: 12, scale: 2 }).notNull(),
 
-  /* cost/profit */
-  unit_cost: decimal('unit_cost', { precision: 12, scale: 2 }).notNull(),
-  profit: decimal('profit', { precision: 12, scale: 2 }).notNull(),
+  /* cost/profit — backfilled for M-Pesa sales on callback */
+  unit_cost: decimal('unit_cost', { precision: 12, scale: 4 })
+    .notNull()
+    .default('0'),
+  profit: decimal('profit', { precision: 12, scale: 2 }).notNull().default('0'),
 
   created_at: timestamp('created_at').defaultNow().notNull(),
 });

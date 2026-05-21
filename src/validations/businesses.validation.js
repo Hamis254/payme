@@ -1,10 +1,6 @@
 import { z } from 'zod';
 
-export const paymentMethodEnum = z.enum([
-  'till_number',
-  'paybill',
-  'wallet',
-]);
+export const paymentMethodEnum = z.enum(['till_number', 'paybill', 'wallet']);
 
 export const createBusinessSchema = z.object({
   name: z.string().min(2).max(255).trim(),

@@ -22,7 +22,7 @@ import { businesses } from '#models/setting.model.js';
 
 /**
  * statement_audit_logs
- * 
+ *
  * Core audit log for statement generation with cryptographic fingerprinting
  * - verification_code: 9-character code (ABC-DEF-GHI) used for QR verification
  * - sha256_fingerprint: Hash of transaction data at creation—if amount changes, hash breaks
@@ -42,7 +42,9 @@ export const statementAuditLogs = pgTable('statement_audit_logs', {
     .references(() => businesses.id, { onDelete: 'cascade' }),
 
   // Verification Code (9-char format: ABC-DEF-GHI)
-  verification_code: varchar('verification_code', { length: 11 }).notNull().unique(),
+  verification_code: varchar('verification_code', { length: 11 })
+    .notNull()
+    .unique(),
 
   // Fingerprints & Hashes
   sha256_fingerprint: varchar('sha256_fingerprint', { length: 64 }).notNull(),
@@ -58,7 +60,9 @@ export const statementAuditLogs = pgTable('statement_audit_logs', {
   pdf_metadata: jsonb('pdf_metadata'),
 
   // QR Code & Verification
-  qr_verification_url: varchar('qr_verification_url', { length: 512 }).notNull(),
+  qr_verification_url: varchar('qr_verification_url', {
+    length: 512,
+  }).notNull(),
 
   // Verification Status (scanned = true when QR code is scanned)
   is_verified: integer('is_verified').default(0).notNull(),

@@ -3,24 +3,15 @@ import { db } from '#config/database.js';
 import {
   offlineQueue,
   offlineSyncHistory,
-  offlineLocalData,
   offlineConfig,
 } from '#models/offlineQueue.model.js';
-import {
-  eq,
-  and,
-  ne,
-  desc,
-  asc,
-  lte,
-  lt,
-} from 'drizzle-orm';
+import { eq, and, desc, asc, lte, lt } from 'drizzle-orm';
 
 /**
  * Add operation to offline queue
  * Called when request fails due to network error
  */
-export const queueOfflineOperation = async (data) => {
+export const queueOfflineOperation = async data => {
   const {
     userId,
     businessId,
@@ -70,11 +61,7 @@ export const queueOfflineOperation = async (data) => {
  * Get all pending operations for a business
  */
 export const getPendingOperations = async (businessId, options = {}) => {
-  const {
-    status = 'pending',
-    limit = 100,
-    offset = 0,
-  } = options;
+  const { status = 'pending', limit = 100, offset = 0 } = options;
 
   try {
     const operations = await db
@@ -214,7 +201,7 @@ export const resolveConflict = async (queueId, strategy) => {
 /**
  * Retry failed sync operations
  */
-export const retryFailedOperations = async (businessId) => {
+export const retryFailedOperations = async businessId => {
   logger.info('Retrying failed operations', { businessId });
 
   try {
@@ -316,7 +303,8 @@ const handleSyncFailure = async (queueId, error) => {
 
   if (!operation) return;
 
-  const isNetworkError = error.message.includes('Network') ||
+  const isNetworkError =
+    error.message.includes('Network') ||
     error.message.includes('timeout') ||
     error.message.includes('ECONNREFUSED');
 
@@ -336,7 +324,10 @@ const handleSyncFailure = async (queueId, error) => {
       })
       .where(eq(offlineQueue.id, queueId));
 
-    logger.warn('Operation exceeded max retries', { queueId, attempts: newAttempts });
+    logger.warn('Operation exceeded max retries', {
+      queueId,
+      attempts: newAttempts,
+    });
   } else {
     // Retry later
     await db
@@ -368,7 +359,10 @@ const updateOperationStatus = async (queueId, status, additionalData = {}) => {
     updateData.resolution_strategy = additionalData.resolutionStrategy;
   }
 
-  await db.update(offlineQueue).set(updateData).where(eq(offlineQueue.id, queueId));
+  await db
+    .update(offlineQueue)
+    .set(updateData)
+    .where(eq(offlineQueue.id, queueId));
 };
 
 /**
@@ -399,7 +393,7 @@ const recordSyncHistory = async (queueId, syncStatus, responseData) => {
 /**
  * Get sync status for business
  */
-export const getSyncStatus = async (businessId) => {
+export const getSyncStatus = async businessId => {
   try {
     const pending = await db
       .select()
@@ -489,7 +483,7 @@ export const clearSyncedOperations = async (businessId, olderThanDays = 7) => {
 /**
  * Get offline configuration for business
  */
-export const getOfflineConfig = async (businessId) => {
+export const getOfflineConfig = async businessId => {
   try {
     const [config] = await db
       .select()
@@ -508,11 +502,33 @@ export const getOfflineConfig = async (businessId) => {
  */
 export const updateOfflineConfig = async (businessId, updates) => {
   try {
-    const [updated] = await db
-      .update(offlineConfig)
-      .set(updates)
+    const [existing] = await db
+      .select()
+      .from(offlineConfig)
       .where(eq(offlineConfig.business_id, businessId))
-      .returning();
+      .limit(1);
+
+    let updated;
+    if (!existing) {
+      [updated] = await db
+        .insert(offlineConfig)
+        .values({
+          business_id: businessId,
+          ...updates,
+          created_at: new Date(),
+          updated_at: new Date(),
+        })
+        .returning();
+    } else {
+      [updated] = await db
+        .update(offlineConfig)
+        .set({
+          ...updates,
+          updated_at: new Date(),
+        })
+        .where(eq(offlineConfig.business_id, businessId))
+        .returning();
+    }
 
     logger.info('Offline config updated', { businessId });
     return updated;

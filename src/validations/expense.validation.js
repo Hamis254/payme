@@ -22,9 +22,7 @@ export const recordExpenseSchema = z.object({
     .number()
     .positive('Amount must be greater than 0')
     .describe('Expense amount in KES'),
-  paymentMethod: z
-    .enum(PAYMENT_METHODS)
-    .describe('How expense was paid'),
+  paymentMethod: z.enum(PAYMENT_METHODS).describe('How expense was paid'),
   paymentReference: z
     .string()
     .max(128, 'Payment reference must not exceed 128 characters')
@@ -109,10 +107,7 @@ export const updateExpenseSchema = z.object({
     .number()
     .int()
     .positive('Business ID must be a positive integer'),
-  expenseId: z
-    .number()
-    .int()
-    .positive('Expense ID must be a positive integer'),
+  expenseId: z.number().int().positive('Expense ID must be a positive integer'),
   category: z
     .enum(EXPENSE_CATEGORIES)
     .optional()
@@ -151,10 +146,7 @@ export const deleteExpenseSchema = z.object({
     .number()
     .int()
     .positive('Business ID must be a positive integer'),
-  expenseId: z
-    .number()
-    .int()
-    .positive('Expense ID must be a positive integer'),
+  expenseId: z.number().int().positive('Expense ID must be a positive integer'),
 });
 
 /**

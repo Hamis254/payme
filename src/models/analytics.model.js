@@ -32,7 +32,10 @@ export const analyticsCache = pgTable('analytics_cache', {
   metric_value: decimal('metric_value', { precision: 15, scale: 2 }).notNull(),
 
   /* additional context */
-  comparison_previous: decimal('comparison_previous', { precision: 15, scale: 2 }), // previous period value for trend
+  comparison_previous: decimal('comparison_previous', {
+    precision: 15,
+    scale: 2,
+  }), // previous period value for trend
   change_percent: decimal('change_percent', { precision: 8, scale: 2 }), // percent change from previous period
 
   /* lifecycle */
@@ -59,10 +62,18 @@ export const productAnalytics = pgTable('product_analytics', {
   period_date: date('period_date').notNull(),
 
   /* product metrics */
-  units_sold: decimal('units_sold', { precision: 12, scale: 3 }).notNull().default(0),
-  total_revenue: decimal('total_revenue', { precision: 12, scale: 2 }).notNull().default(0),
-  total_cost: decimal('total_cost', { precision: 12, scale: 2 }).notNull().default(0),
-  total_profit: decimal('total_profit', { precision: 12, scale: 2 }).notNull().default(0),
+  units_sold: decimal('units_sold', { precision: 12, scale: 3 })
+    .notNull()
+    .default(0),
+  total_revenue: decimal('total_revenue', { precision: 12, scale: 2 })
+    .notNull()
+    .default(0),
+  total_cost: decimal('total_cost', { precision: 12, scale: 2 })
+    .notNull()
+    .default(0),
+  total_profit: decimal('total_profit', { precision: 12, scale: 2 })
+    .notNull()
+    .default(0),
 
   /* rankings */
   rank_by_revenue: integer('rank_by_revenue'), // 1 = top product
@@ -89,8 +100,13 @@ export const customerAnalytics = pgTable('customer_analytics', {
 
   /* lifetime metrics */
   total_purchases: integer('total_purchases').notNull().default(0),
-  total_spent: decimal('total_spent', { precision: 12, scale: 2 }).notNull().default(0),
-  avg_transaction_value: decimal('avg_transaction_value', { precision: 12, scale: 2 }).default(0),
+  total_spent: decimal('total_spent', { precision: 12, scale: 2 })
+    .notNull()
+    .default(0),
+  avg_transaction_value: decimal('avg_transaction_value', {
+    precision: 12,
+    scale: 2,
+  }).default(0),
 
   /* frequency */
   last_purchase_date: date('last_purchase_date'),
@@ -127,9 +143,14 @@ export const revenueBreakdown = pgTable('revenue_breakdown', {
   customer_type: varchar('customer_type', { length: 50 }), // walk_in | credit | hire_purchase
 
   /* revenue metrics */
-  total_revenue: decimal('total_revenue', { precision: 12, scale: 2 }).notNull().default(0),
+  total_revenue: decimal('total_revenue', { precision: 12, scale: 2 })
+    .notNull()
+    .default(0),
   transaction_count: integer('transaction_count').notNull().default(0),
-  avg_transaction: decimal('avg_transaction', { precision: 12, scale: 2 }).default(0),
+  avg_transaction: decimal('avg_transaction', {
+    precision: 12,
+    scale: 2,
+  }).default(0),
 
   created_at: timestamp('created_at').defaultNow().notNull(),
   updated_at: timestamp('updated_at').defaultNow().notNull(),

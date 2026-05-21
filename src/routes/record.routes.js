@@ -42,20 +42,14 @@ router.post(
  *   - limit: max 500 (default: 100)
  *   - offset: pagination (default: 0)
  */
-router.get(
-  '/:business_id',
-  recordController.getRecords
-);
+router.get('/:business_id', recordController.getRecords);
 
 /**
  * GET SINGLE RECORD
  * GET /api/records/:business_id/:record_id
  * Returns record with items
  */
-router.get(
-  '/:business_id/:record_id',
-  recordController.getRecordById
-);
+router.get('/:business_id/:record_id', recordController.getRecordById);
 
 /**
  * FINANCIAL TOTALS
@@ -65,10 +59,7 @@ router.get(
  *   - end_date: YYYY-MM-DD (default: today)
  * Returns: aggregated totals (sales, expenses, profit, etc.)
  */
-router.get(
-  '/:business_id/totals',
-  recordController.getTotals
-);
+router.get('/:business_id/totals', recordController.getTotals);
 
 /**
  * DASHBOARD INSIGHTS
@@ -77,10 +68,7 @@ router.get(
  *   - period: daily, weekly, monthly (default: daily)
  * Returns: trend data for charts
  */
-router.get(
-  '/:business_id/insights',
-  recordController.getDashboardInsights
-);
+router.get('/:business_id/insights', recordController.getDashboardInsights);
 
 /**
  * GENERATE STATEMENT

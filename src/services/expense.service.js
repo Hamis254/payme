@@ -44,15 +44,12 @@ export async function recordExpense(data) {
       })
       .returning();
 
-    logger.info(
-      `Expense recorded: ${expense.id} for business ${businessId}`,
-      {
-        expenseId: expense.id,
-        category,
-        amount,
-        createdBy,
-      }
-    );
+    logger.info(`Expense recorded: ${expense.id} for business ${businessId}`, {
+      expenseId: expense.id,
+      category,
+      amount,
+      createdBy,
+    });
 
     return expense;
   } catch (error) {
@@ -102,32 +99,32 @@ export async function listExpenses(params) {
       offset = 0,
     } = params;
 
-    let query = db
-      .select()
-      .from(expenses)
-      .where(eq(expenses.business_id, businessId));
+    const conditions = [eq(expenses.business_id, businessId)];
 
     if (category) {
-      query = query.where(eq(expenses.category, category));
+      conditions.push(eq(expenses.category, category));
     }
 
     if (paymentMethod) {
-      query = query.where(eq(expenses.payment_method, paymentMethod));
+      conditions.push(eq(expenses.payment_method, paymentMethod));
     }
 
     if (status) {
-      query = query.where(eq(expenses.status, status));
+      conditions.push(eq(expenses.status, status));
     }
 
     if (startDate) {
-      query = query.where(gte(expenses.expense_date, new Date(startDate)));
+      conditions.push(gte(expenses.expense_date, new Date(startDate)));
     }
 
     if (endDate) {
-      query = query.where(lte(expenses.expense_date, new Date(endDate)));
+      conditions.push(lte(expenses.expense_date, new Date(endDate)));
     }
 
-    const results = await query
+    const results = await db
+      .select()
+      .from(expenses)
+      .where(and(...conditions))
       .orderBy(desc(expenses.expense_date))
       .limit(limit)
       .offset(offset);
@@ -236,7 +233,11 @@ export async function getExpenseByCategory(businessId, startDate, endDate) {
  * @param {string} endDate - End date (ISO format)
  * @returns {Promise<Array>} Payment method breakdown
  */
-export async function getExpenseByPaymentMethod(businessId, startDate, endDate) {
+export async function getExpenseByPaymentMethod(
+  businessId,
+  startDate,
+  endDate
+) {
   try {
     let whereClause = eq(expenses.business_id, businessId);
 
@@ -394,7 +395,9 @@ export async function updateExpense(businessId, expenseId, data) {
     const [updated] = await db
       .update(expenses)
       .set(updateData)
-      .where(and(eq(expenses.id, expenseId), eq(expenses.business_id, businessId)))
+      .where(
+        and(eq(expenses.id, expenseId), eq(expenses.business_id, businessId))
+      )
       .returning();
 
     logger.info(`Expense ${expenseId} updated for business ${businessId}`);
@@ -416,7 +419,9 @@ export async function deleteExpense(businessId, expenseId) {
   try {
     const [deleted] = await db
       .delete(expenses)
-      .where(and(eq(expenses.id, expenseId), eq(expenses.business_id, businessId)))
+      .where(
+        and(eq(expenses.id, expenseId), eq(expenses.business_id, businessId))
+      )
       .returning();
 
     logger.info(`Expense ${expenseId} deleted for business ${businessId}`);

@@ -57,7 +57,7 @@ router.post('/:businessId/create', authenticateToken, createAgreementHandler);
  * @param agreementId - Agreement ID
  * @example GET /api/hire-purchase/5/1
  */
-router.get('/:businessId/:agreementId', authenticateToken, getAgreementHandler);
+router.get('/:businessId/overdue', authenticateToken, getOverdueHandler);
 
 /**
  * GET /api/hire-purchase/:businessId
@@ -72,7 +72,7 @@ router.get('/:businessId/:agreementId', authenticateToken, getAgreementHandler);
  * }
  * @example GET /api/hire-purchase/5?status=active&limit=20
  */
-router.get('/:businessId', authenticateToken, listAgreementsHandler);
+router.get('/:businessId/upcoming', authenticateToken, getUpcomingHandler);
 
 /**
  * POST /api/hire-purchase/:businessId/:agreementId/payment
@@ -113,7 +113,7 @@ router.post(
  *   overdue: [...]
  * }
  */
-router.get('/:businessId/overdue', authenticateToken, getOverdueHandler);
+router.get('/:businessId/summary', authenticateToken, getSummaryHandler);
 
 /**
  * GET /api/hire-purchase/:businessId/upcoming
@@ -124,7 +124,11 @@ router.get('/:businessId/overdue', authenticateToken, getOverdueHandler);
  * }
  * @example GET /api/hire-purchase/5/upcoming?daysAhead=7
  */
-router.get('/:businessId/upcoming', authenticateToken, getUpcomingHandler);
+router.get(
+  '/:businessId/:agreementId/payment-history',
+  authenticateToken,
+  getPaymentHistoryHandler
+);
 
 /**
  * GET /api/hire-purchase/:businessId/summary
@@ -146,7 +150,7 @@ router.get('/:businessId/upcoming', authenticateToken, getUpcomingHandler);
  *   collection_rate: 76.0
  * }
  */
-router.get('/:businessId/summary', authenticateToken, getSummaryHandler);
+router.get('/:businessId/:agreementId', authenticateToken, getAgreementHandler);
 
 /**
  * GET /api/hire-purchase/:businessId/:agreementId/payment-history
@@ -155,11 +159,7 @@ router.get('/:businessId/summary', authenticateToken, getSummaryHandler);
  * @param agreementId - Agreement ID
  * @example GET /api/hire-purchase/5/1/payment-history
  */
-router.get(
-  '/:businessId/:agreementId/payment-history',
-  authenticateToken,
-  getPaymentHistoryHandler
-);
+router.get('/:businessId', authenticateToken, listAgreementsHandler);
 
 /**
  * PATCH /api/hire-purchase/:businessId/:agreementId/status

@@ -11,6 +11,11 @@ import { businesses } from '#models/setting.model.js';
 import axios from 'axios';
 import base64 from 'base-64';
 
+const normalizePaymentMethod = method => {
+  if (method === 'till') return 'till_number';
+  return method;
+};
+
 // ============ SETUP & CREATE PAYMENT CONFIG ============
 
 /**
@@ -63,7 +68,7 @@ export const createPaymentConfig = async ({
       .insert(paymentConfigs)
       .values({
         business_id: businessId,
-        payment_method: paymentMethod,
+        payment_method: normalizePaymentMethod(paymentMethod),
         shortcode,
         passkey,
         account_reference: accountReference,
@@ -145,10 +150,17 @@ export const getPaymentConfigById = async configId => {
  */
 export const updatePaymentConfig = async (configId, updates) => {
   try {
+    const normalizedUpdates = {
+      ...updates,
+      payment_method: updates.payment_method
+        ? normalizePaymentMethod(updates.payment_method)
+        : updates.payment_method,
+    };
+
     const [config] = await db
       .update(paymentConfigs)
       .set({
-        ...updates,
+        ...normalizedUpdates,
         updated_at: new Date(),
       })
       .where(eq(paymentConfigs.id, configId))
@@ -167,7 +179,6 @@ export const updatePaymentConfig = async (configId, updates) => {
 };
 
 // ============ VERIFY PAYMENT CONFIG ============
-
 
 // ============ TOGGLE PAYMENT CONFIG STATUS ============
 

@@ -6,7 +6,7 @@ import {
   notificationTemplates,
 } from '#models/notification.model.js';
 import { users } from '#models/user.model.js';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, desc } from 'drizzle-orm';
 import nodemailer from 'nodemailer';
 import africastalking from 'africastalking';
 
@@ -87,7 +87,9 @@ export const notificationService = {
         })
         .returning();
 
-      logger.info(`Notification ${notification.id} created for user ${user_id}`);
+      logger.info(
+        `Notification ${notification.id} created for user ${user_id}`
+      );
 
       // 5. Send via requested channels
       const sendPromises = [];
@@ -130,7 +132,9 @@ export const notificationService = {
       // Ensure phone is in correct format (+254XXXXXXXXX)
       const formattedPhone = this._formatPhone(phone);
 
-      logger.info(`Sending SMS to ${formattedPhone} for notification ${notificationId}`);
+      logger.info(
+        `Sending SMS to ${formattedPhone} for notification ${notificationId}`
+      );
 
       const response = await AT.SMS.send({
         to: [formattedPhone],
@@ -176,14 +180,18 @@ export const notificationService = {
           sms_error: e.message,
         })
         .where(eq(notifications.id, notificationId))
-        .catch(err => logger.error('Error updating notification SMS error', err));
+        .catch(err =>
+          logger.error('Error updating notification SMS error', err)
+        );
     }
   },
 
   // Send email via Nodemailer
   async _sendEmail(notificationId, email, title, message, type) {
     try {
-      logger.info(`Sending email to ${email} for notification ${notificationId}`);
+      logger.info(
+        `Sending email to ${email} for notification ${notificationId}`
+      );
 
       // Get template
       const [template] = await db
@@ -194,8 +202,7 @@ export const notificationService = {
 
       const subject = template?.email_subject || title;
       const htmlContent =
-        template?.email_template ||
-        `<h2>${title}</h2><p>${message}</p>`;
+        template?.email_template || `<h2>${title}</h2><p>${message}</p>`;
 
       const mailOptions = {
         from: process.env.SMTP_FROM || 'noreply@payme.app',
@@ -227,7 +234,9 @@ export const notificationService = {
           email_error: e.message,
         })
         .where(eq(notifications.id, notificationId))
-        .catch(err => logger.error('Error updating notification email error', err));
+        .catch(err =>
+          logger.error('Error updating notification email error', err)
+        );
     }
   },
 
@@ -263,6 +272,7 @@ export const notificationService = {
   // Update user preferences
   async updatePreferences(userId, updates) {
     try {
+      await this.getUserPreferences(userId);
       const [prefs] = await db
         .update(notificationPreferences)
         .set({
@@ -287,7 +297,7 @@ export const notificationService = {
         .select()
         .from(notifications)
         .where(eq(notifications.user_id, userId))
-        .orderBy(notifications.created_at)
+        .orderBy(desc(notifications.created_at))
         .limit(limit)
         .offset(offset);
 

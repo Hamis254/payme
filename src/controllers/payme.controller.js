@@ -12,12 +12,20 @@ import {
 } from '#services/sales.service.js';
 import { getPaymentConfig } from '#services/paymentConfig.service.js';
 import { initiateBusinessPayment } from '#utils/mpesa.js';
+import { createCreditSale } from '#services/credit.service.js';
+import { createAgreement } from '#services/higherPurchase.service.js';
+import { createRecord } from '#services/record.service.js';
 import { db } from '#config/database.js';
 import { sales } from '#models/sales.model.js';
 import { payments } from '#models/payments.model.js';
 import { eq } from 'drizzle-orm';
 
-// Preview cart totals before payment
+// ─────────────────────────────────────────────
+// PREVIEW CART
+// POST /api/payme/preview
+// Validates items and returns totals before payment — no sale created
+// ─────────────────────────────────────────────
+
 export const previewCart = async (req, res, next) => {
   try {
     if (!req.user) {
@@ -63,7 +71,13 @@ export const previewCart = async (req, res, next) => {
   }
 };
 
-// Main PayMe endpoint - process sale with immediate M-Pesa STK if needed
+// ─────────────────────────────────────────────
+// PROCESS PAYME
+// POST /api/payme/
+// Sole entry point for all sale creation.
+// Handles cash, M-Pesa, credit, and hire purchase.
+// ─────────────────────────────────────────────
+
 export const processPayMe = async (req, res, next) => {
   try {
     if (!req.user) {
@@ -86,57 +100,96 @@ export const processPayMe = async (req, res, next) => {
       customer_phone,
       customer_type,
       note,
+      // Credit fields
+      credit_account_id,
+      credit_due_date,
+      // Hire Purchase fields
+      hp_account_id,
+      hp_interest_rate,
+      hp_down_payment,
+      hp_installment_amount,
+      hp_installment_frequency,
+      hp_number_of_installments,
+      hp_first_payment_date,
     } = validationResult.data;
 
-    // For M-Pesa, validate payment config EXISTS before creating sale
+    // For M-Pesa, validate payment config EXISTS before creating a sale
     if (payment_mode === 'mpesa') {
-      if (!customer_phone) {
-        return res.status(400).json({
-          error: 'Customer phone number is required for M-Pesa payment',
-        });
-      }
-
       const paymentConfig = await getPaymentConfig(business_id);
       if (!paymentConfig) {
         return res.status(400).json({
           error: 'Payment configuration not found',
           hint: 'Please setup your M-Pesa payment method first',
-          setupUrl: '/api/payment-config/setup',
+          setup_url: '/api/payment-config/fields?method=paybill',
         });
       }
       if (!paymentConfig.is_active) {
         return res.status(400).json({
           error: 'Payment configuration is inactive',
-          hint: 'Please activate or reconfigure your M-Pesa credentials',
+          hint: 'Please activate or reconfigure your M-Pesa credentials in Settings',
         });
       }
     }
 
-    // Create the sale
+    // Create the core sale record
     const result = await createSale(
       req.user.id,
       business_id,
       items,
       payment_mode,
-      {
-        customer_phone,
-        customer_type,
-        note,
-      }
+      { customer_phone, customer_type, note }
     );
 
-    // Build response
     const response = {
       message:
         payment_mode === 'cash'
           ? 'Sale completed successfully'
-          : 'Sale created, initiating M-Pesa payment',
+          : payment_mode === 'mpesa'
+            ? 'Sale created, initiating M-Pesa payment'
+            : payment_mode === 'credit'
+              ? 'Credit sale recorded'
+              : 'Hire purchase agreement created',
       sale: result.sale,
       items: result.items,
       summary: result.summary,
     };
 
-    // If M-Pesa, immediately initiate STK push
+    // ══════════════════════════════════════════
+    // CASH — write ledger record immediately
+    // ══════════════════════════════════════════
+    if (payment_mode === 'cash') {
+      try {
+        await createRecord({
+          business_id,
+          user_id: req.user.id,
+          type: 'sales',
+          category: 'cash',
+          amount: result.summary.total_amount,
+          payment_method: 'cash',
+          transaction_date: new Date(),
+          reference_id: String(result.sale.id),
+          description: `Cash sale #${result.sale.id}`,
+          items: result.items.map(item => ({
+            item_name: item.product_name || `Product #${item.product_id}`,
+            quantity: Number(item.quantity),
+            unit_price: Number(item.unit_price),
+            product_id: item.product_id,
+            cost_per_unit: item.unit_cost ? Number(item.unit_cost) : null,
+          })),
+        });
+      } catch (recordError) {
+        logger.error('Failed to write cash sale to ledger', {
+          sale_id: result.sale.id,
+          error: recordError.message,
+        });
+        // Non-fatal
+      }
+    }
+
+    // ══════════════════════════════════════════
+    // M-PESA — initiate STK push
+    // Record/token deduction happens in callback after resultCode === 0
+    // ══════════════════════════════════════════
     if (payment_mode === 'mpesa') {
       try {
         const paymentConfig = await getPaymentConfig(business_id);
@@ -148,12 +201,12 @@ export const processPayMe = async (req, res, next) => {
           description: `PAYME Sale #${result.sale.id}`,
         });
 
-        // Store payment initiation
+        // Store payment initiation record
         await db.insert(payments).values({
           sale_id: result.sale.id,
           stk_request_id: mpesaResp.CheckoutRequestID || null,
           phone: customer_phone,
-          amount: result.summary.total_amount,
+          amount: String(result.summary.total_amount),
           status: 'initiated',
           callback_payload: JSON.stringify(mpesaResp),
           created_at: new Date(),
@@ -172,7 +225,9 @@ export const processPayMe = async (req, res, next) => {
         response.mpesa = {
           status: 'initiated',
           checkoutRequestId: mpesaResp.CheckoutRequestID,
-          customer_message: mpesaResp.CustomerMessage || 'Enter MPESA PIN on your phone to complete payment',
+          customer_message:
+            mpesaResp.CustomerMessage ||
+            'Enter MPESA PIN on your phone to complete payment',
           amount: result.summary.total_amount,
         };
 
@@ -183,14 +238,144 @@ export const processPayMe = async (req, res, next) => {
       } catch (mpesaError) {
         logger.error('Failed to initiate M-Pesa for PayMe', mpesaError);
         return res.status(400).json({
-          error: 'Failed to initiate payment',
+          error: 'Failed to initiate M-Pesa payment',
           message: mpesaError.message,
         });
       }
     }
 
+    // ══════════════════════════════════════════
+    // CREDIT SALE
+    // ══════════════════════════════════════════
+    if (payment_mode === 'credit') {
+      try {
+        await createCreditSale(
+          req.user.id,
+          business_id,
+          credit_account_id,
+          result.summary.total_amount,
+          credit_due_date,
+          result.items
+        );
+
+        await createRecord({
+          business_id,
+          user_id: req.user.id,
+          type: 'credit',
+          category: 'credit_sale',
+          amount: result.summary.total_amount,
+          payment_method: 'credit',
+          transaction_date: new Date(),
+          reference_id: String(result.sale.id),
+          description: `Credit sale #${result.sale.id}`,
+          credit_due_date,
+          items: result.items.map(item => ({
+            item_name: item.product_name || `Product #${item.product_id}`,
+            quantity: Number(item.quantity),
+            unit_price: Number(item.unit_price),
+            product_id: item.product_id,
+            cost_per_unit: item.unit_cost ? Number(item.unit_cost) : null,
+          })),
+        });
+
+        response.credit = {
+          status: 'recorded',
+          account_id: credit_account_id,
+          due_date: credit_due_date,
+          amount_due: result.summary.total_amount,
+        };
+      } catch (creditError) {
+        logger.error('Credit sale processing failed', creditError);
+        return res.status(400).json({
+          error: 'Credit sale failed',
+          message: creditError.message,
+        });
+      }
+    }
+
+    // ══════════════════════════════════════════
+    // HIRE PURCHASE
+    // ══════════════════════════════════════════
+    if (payment_mode === 'hire_purchase') {
+      try {
+        const totalAmount = result.summary.total_amount;
+
+        // Calculate final payment date from frequency + number of installments
+        const finalPaymentDate = new Date(hp_first_payment_date);
+        if (hp_installment_frequency === 'monthly') {
+          finalPaymentDate.setMonth(
+            finalPaymentDate.getMonth() + hp_number_of_installments - 1
+          );
+        } else if (hp_installment_frequency === 'weekly') {
+          finalPaymentDate.setDate(
+            finalPaymentDate.getDate() + (hp_number_of_installments - 1) * 7
+          );
+        } else if (hp_installment_frequency === 'bi-weekly') {
+          finalPaymentDate.setDate(
+            finalPaymentDate.getDate() + (hp_number_of_installments - 1) * 14
+          );
+        } else if (hp_installment_frequency === 'daily') {
+          finalPaymentDate.setDate(
+            finalPaymentDate.getDate() + hp_number_of_installments - 1
+          );
+        }
+
+        const agreement = await createAgreement({
+          saleId: result.sale.id,
+          accountId: hp_account_id,
+          businessId: business_id,
+          principalAmount: totalAmount,
+          interestRate: hp_interest_rate,
+          downPayment: hp_down_payment,
+          installmentAmount: hp_installment_amount,
+          installmentFrequency: hp_installment_frequency,
+          numberOfInstallments: hp_number_of_installments,
+          agreementDate: new Date(),
+          firstPaymentDate: hp_first_payment_date,
+          finalPaymentDate,
+          lateFeeAmount: 0,
+          gracePeriodDays: 3,
+          createdBy: req.user.id,
+        });
+
+        await createRecord({
+          business_id,
+          user_id: req.user.id,
+          type: 'hp',
+          category: 'hire_purchase',
+          amount: totalAmount,
+          payment_method: 'hire_purchase',
+          transaction_date: new Date(),
+          reference_id: String(result.sale.id),
+          description: `HP sale #${result.sale.id} — ${hp_number_of_installments} installments`,
+          items: result.items.map(item => ({
+            item_name: item.product_name || `Product #${item.product_id}`,
+            quantity: Number(item.quantity),
+            unit_price: Number(item.unit_price),
+            product_id: item.product_id,
+            cost_per_unit: item.unit_cost ? Number(item.unit_cost) : null,
+          })),
+        });
+
+        response.hire_purchase = {
+          status: 'agreement_created',
+          agreement_id: agreement.agreement?.id,
+          installments: hp_number_of_installments,
+          installment_amount: hp_installment_amount,
+          frequency: hp_installment_frequency,
+          first_payment_date: hp_first_payment_date,
+        };
+      } catch (hpError) {
+        logger.error('Hire purchase processing failed', hpError);
+        return res.status(400).json({
+          error: 'Hire purchase failed',
+          message: hpError.message,
+        });
+      }
+    }
+
     logger.info(
-      `PayMe processed: ${payment_mode} sale for business ${business_id}, total: ${result.summary.total_amount}`
+      `PayMe processed: ${payment_mode} sale #${result.sale.id} — business ${business_id}, total: ${result.summary.total_amount}`
     );
 
     res.status(201).json(response);
@@ -209,7 +394,11 @@ export const processPayMe = async (req, res, next) => {
   }
 };
 
-// Get sales history for a business
+// ─────────────────────────────────────────────
+// GET SALES HISTORY
+// GET /api/payme/sales/business/:businessId
+// ─────────────────────────────────────────────
+
 export const getSalesHistory = async (req, res, next) => {
   try {
     if (!req.user) {
@@ -240,7 +429,11 @@ export const getSalesHistory = async (req, res, next) => {
   }
 };
 
-// Get single sale details
+// ─────────────────────────────────────────────
+// GET SINGLE SALE DETAILS
+// GET /api/payme/sales/:id
+// ─────────────────────────────────────────────
+
 export const getSaleDetails = async (req, res, next) => {
   try {
     if (!req.user) {

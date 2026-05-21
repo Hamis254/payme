@@ -328,10 +328,13 @@ export const listMpesaReconciliationsHandler = async (req, res, next) => {
 
     const { limit = 30, offset = 0 } = req.query;
 
-    const reconciliations = await getMpesaReconciliations(parseInt(businessId), {
-      limit: parseInt(limit),
-      offset: parseInt(offset),
-    });
+    const reconciliations = await getMpesaReconciliations(
+      parseInt(businessId),
+      {
+        limit: parseInt(limit),
+        offset: parseInt(offset),
+      }
+    );
 
     return res.status(200).json({
       success: true,

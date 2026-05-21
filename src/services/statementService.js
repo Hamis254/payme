@@ -4,7 +4,7 @@
  * =============================================================================
  * * CORE RESPONSIBILITY:
  * This service orchestrates the creation of "Bank-Grade" financial statements.
- * It synthesizes merchant identity from 'setting.model', transaction data 
+ * It synthesizes merchant identity from 'setting.model', transaction data
  * from 'record.model', and pre-defined HTML templates into a secure PDF.
  *
  * * SUPPORTING LIBRARIES & DEPENDENCIES:
@@ -18,7 +18,7 @@
  * - statementHeaders.html: Contains Business Identity, Logo, and Status.
  * - statementFooter.html: Contains Data Privacy, QR, and Verification Codes.
  * - statement.html (Body): Contains the Ledger and Revenue Summary.
- * - statementService.js: Orchestrates data fetching, template rendering, 
+ * - statementService.js: Orchestrates data fetching, template rendering,
  *   and PDF generation.
  *
  * * BUSINESS LOGIC:
@@ -45,7 +45,11 @@ import {
   statementAuditLogs,
   statementVerificationChecks,
 } from '#models/statementAudit.model.js';
-import { eq } from 'drizzle-orm';
+import { sql, inArray, eq, gte, lte, and } from 'drizzle-orm';
+import { businesses } from '#models/business.model.js';
+import { users } from '#models/user.model.js';
+import { record_items } from '#models/recordItem.model.js';
+import { spoiledStock } from '#models/spoiledStock.model.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -197,17 +201,12 @@ function generatePdfSecurityMetadata() {
   const metadata = {
     'pdf-creator': 'PayMe Financial System',
     'pdf-producer': 'PayMe v1.4.0',
-    'pdf-encryption': 'AES-256',
-    'pdf-permissions': 'read-only',
-    'pdf-restriction': 'no-copy,no-print-modifications',
-    'pdf-security-timestamp': new Date().toISOString(),
+    'pdf-generated': new Date().toISOString(),
+    'pdf-verification': 'SHA-256 fingerprint-verify at payme.co.ke/verify',
   };
 
   return Object.entries(metadata)
-    .map(
-      ([key, value]) =>
-        `<meta name="${key}" content="${value}" />`
-    )
+    .map(([key, value]) => `<meta name="${key}" content="${value}" />`)
     .join('\n');
 }
 
@@ -240,22 +239,22 @@ function formatDate(date) {
 
 /**
  * GENERATE BUSINESS STATEMENT: Main PDF generation orchestrator
- * 
+ *
  * SECURITY ENHANCEMENTS:
  * 1. SHA-256 FINGERPRINTING: Hashes all transaction data at creation time
  *    - If ANY amount is changed, the fingerprint breaks
  *    - Bank officers can verify authenticity by comparing stored vs. current hash
- * 
+ *
  * 2. AUDIT LOG STORAGE: Stores verification code + fingerprint in database
  *    - 9-character code (ABC-DEF-GHI) encoded in QR code
  *    - When QR is scanned, system checks if code exists in audit_logs table
  *    - Prevents forged documents from being verified
- * 
+ *
  * 3. PDF READ-ONLY PERMISSIONS: Embeds security metadata in HTML
  *    - PDF viewers respect "read-only" flags
  *    - Prevents simple text editing tools from modifying amounts
  *    - Metadata includes encryption type, permissions, timestamp
- * 
+ *
  * @param {number} businessId - Business ID
  * @param {Date} startDate - Statement start date
  * @param {Date|null} endDate - Statement end date (default: today)
@@ -280,20 +279,25 @@ export async function generateBusinessStatement(
       statement_end_date,
     });
 
-    // TODO: A. Fetch Business Settings (from settings.model)
-    // const businessSettings = await fetchBusinessSettings(businessId);
+    // A. Fetch real business settings from DB
+    const [business] = await db
+      .select()
+      .from(businesses)
+      .where(eq(businesses.id, businessId))
+      .limit(1);
 
-    // Placeholder business settings
-    const businessSettings = {
-      business_name: 'PayMe Business',
-      registration_number: 'BRN-2024-001',
-      phone: '+254712345678',
-      email: 'business@example.com',
-      address: 'Nairobi, Kenya',
-      logo_url: 'https://payme.co.ke/logo.png', // Optional
-    };
+    if (!business) {
+      throw new Error('Business not found');
+    }
 
-    // B. Fetch All Records in Date Range
+    // Fetch owner details
+    const [owner] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, business.user_id))
+      .limit(1);
+
+    // B. Fetch all records in date range
     const salesRecords = await recordService.getRecordsByDateRange(
       businessId,
       statement_start_date,
@@ -304,16 +308,51 @@ export async function generateBusinessStatement(
       throw new Error('No records found for the specified date range');
     }
 
-    // C. Calculate Financial Totals
+    // C. Fetch record items for all records (one query, not N+1)
+    const recordIds = salesRecords.map(r => r.id);
+    const allRecordItems = await db
+      .select()
+      .from(record_items)
+      .where(inArray(record_items.record_id, recordIds));
+
+    // Map items to their parent record
+    const itemsByRecord = {};
+    allRecordItems.forEach(item => {
+      if (!itemsByRecord[item.record_id]) {
+        itemsByRecord[item.record_id] = [];
+      }
+      itemsByRecord[item.record_id].push(item);
+    });
+
+    // D. Fetch spoiled stock total for period (separate table)
+    const [spoiledResult] = await db
+      .select({ total: sql`COALESCE(SUM(total_loss_value), 0)` })
+      .from(spoiledStock)
+      .where(
+        and(
+          eq(spoiledStock.business_id, businessId),
+          gte(spoiledStock.created_at, statement_start_date),
+          lte(spoiledStock.created_at, statement_end_date)
+        )
+      );
+    const spoiledTotal = Number(spoiledResult?.total || 0);
+
+    // E. Calculate financial totals from records
     const totals = await recordService.calculateTotals(
       businessId,
       statement_start_date,
       statement_end_date
     );
 
+    // F. Derived P&L figures
+    const grossRevenue =
+      totals.cash_sales + totals.mpesa_sales + totals.higher_purchase;
+    const totalMoneyOut = totals.expenses + spoiledTotal + totals.credit_given;
+    const moneyInHand = grossRevenue - totalMoneyOut;
+
     // ============ SECURITY ENHANCEMENT 1: SHA-256 FINGERPRINTING ============
     const vCode = generateVerificationCode();
-    
+
     // Generate fingerprint of ALL transaction data
     const fingerprint = calculateSHA256Fingerprint({
       businessId,
@@ -338,9 +377,7 @@ export async function generateBusinessStatement(
       vCode,
     });
 
-    const qrUrl = await QRCode.toDataURL(
-      `https://payme.co.ke/verify/${vCode}`
-    );
+    const qrUrl = await QRCode.toDataURL(`https://payme.co.ke/verify/${vCode}`);
 
     // ============ SECURITY ENHANCEMENT 3: PDF SECURITY METADATA ============
     const pdfSecurityMetadata = generatePdfSecurityMetadata();
@@ -370,54 +407,76 @@ export async function generateBusinessStatement(
     const compiledBody = Handlebars.compile(bodyTemplate);
     const compiledFooter = Handlebars.compile(footerTemplate);
 
-    // F. Prepare Template Data
     const templateData = {
-      ...businessSettings,
+      // Business identity (real data)
+      business_name: business.name,
+      location: business.location,
+      address: business.location_description || business.location,
+      phone: business.payment_identifier || '—',
+      phone_number: business.payment_identifier || '—',
+      email: owner?.email || '—',
+      owner_name: owner?.name || owner?.email || '—',
+
+      // Statement period
       statement_start_date: formatDate(statement_start_date),
       statement_end_date: formatDate(statement_end_date),
       generated_date: formatDate(new Date()),
+      current_date: formatDate(new Date()),
+      start_date: formatDate(statement_start_date),
+      end_date: formatDate(statement_end_date),
 
-      // Financial Totals
+      // Revenue summary — keys match statementBody.html exactly
       cash_total: formatCurrency(totals.cash_sales),
       mpesa_total: formatCurrency(totals.mpesa_sales),
-      hp_collection_total: formatCurrency(totals.higher_purchase),
-      credit_recovery_total: formatCurrency(totals.credit_recovered),
-      total_sales: formatCurrency(totals.total_sales),
+      hp_total: formatCurrency(totals.higher_purchase), // was hp_collection_total
+      gross_revenue: formatCurrency(grossRevenue), // was missing
       expense_total: formatCurrency(totals.expenses),
-      grand_total_revenue: formatCurrency(totals.total_sales + totals.higher_purchase),
-      net_profit: formatCurrency(totals.net_profit),
+      spoiled_total: formatCurrency(spoiledTotal), // was missing
+      credit_lent: formatCurrency(totals.credit_given), // was missing
+      total_money_out: formatCurrency(totalMoneyOut), // was missing
+      money_in_hand: formatCurrency(moneyInHand), // was missing
 
-      // Record Details
-      transactions: salesRecords.map(r => ({
-        date: formatDate(r.transaction_date),
-        type: r.type,
-        category: r.category,
-        description: r.description || '—',
-        amount: formatCurrency(r.amount),
-        payment_method: r.payment_method || '—',
-        mpesa_code: r.mpesa_receipt_number || '—',
-      })),
+      // Transaction rows — expand each record into its items
+      transactions: salesRecords.flatMap(record => {
+        const items = itemsByRecord[record.id] || [];
+        if (items.length > 0) {
+          return items.map(item => ({
+            product: item.item_name || '—', // was description
+            qty: `${Number(item.quantity)} units`, // was missing
+            method: (record.payment_method || '—').toUpperCase(), // was missing
+            phone: record.mpesa_sender_phone || '—', // was missing
+            tx_id: record.mpesa_receipt_number || '—', // was mpesa_code
+            time: formatDate(record.transaction_date), // was date
+            amount: formatCurrency(item.total_amount),
+          }));
+        }
+        // Records with no items (e.g. expenses) — show one row
+        return [
+          {
+            product: record.description || record.category || '—',
+            qty: '—',
+            method: (record.payment_method || record.type || '—').toUpperCase(),
+            phone: record.mpesa_sender_phone || '—',
+            tx_id: record.mpesa_receipt_number || '—',
+            time: formatDate(record.transaction_date),
+            amount: formatCurrency(record.amount),
+          },
+        ];
+      }),
 
-      // Verification & Security
+      // Verification & security
       verification_code: vCode,
       qr_code_url: qrUrl,
       sha256_fingerprint: fingerprint,
       record_count: salesRecords.length,
-
-      // Bank-Grade Details
-      bank_name: 'KCB / Equity',
-      verification_bank: 'Verified by PayMe Financial',
-      
-      // Security Metadata (for display in PDF)
-      security_notice: `This document is cryptographically signed with SHA-256 fingerprint: ${fingerprint.substring(0, 16)}... Verification Code: ${vCode}`,
-      pdf_security_note: 'This PDF is read-only and tamper-protected. Any modification will invalidate the cryptographic signature.',
+      security_notice: `SHA-256: ${fingerprint.substring(0, 16)}... | Code: ${vCode}`,
     };
 
     // G. Render HTML Templates with Security Metadata
     const headerHtml = compiledHeader(templateData);
     const bodyHtml = compiledBody(templateData);
     const footerHtml = compiledFooter(templateData);
-    
+
     // Inject security metadata into HTML head
     const fullHtml = `
       <!DOCTYPE html>
@@ -555,14 +614,14 @@ export async function generateCSVStatement(businessId, startDate, endDate) {
 /**
  * VERIFY STATEMENT QR CODE: Check if verification code exists in audit logs
  * Called when bank officer scans the QR code on the PDF
- * 
+ *
  * SECURITY FLOW:
  * 1. Receive 9-character verification code from scanned QR
  * 2. Look up code in statement_audit_logs table
  * 3. If found: verify hash matches (detect tampering)
  * 4. Record verification check in statement_verification_checks table
  * 5. Return audit details if authentic, else flag as fraud
- * 
+ *
  * @param {string} verificationCode - 9-character code (ABC-DEF-GHI) from QR
  * @param {string} providedFingerprint - Optional: hash provided by PDF viewer
  * @param {string} ipAddress - IP of bank officer scanning QR
@@ -581,7 +640,8 @@ export async function verifyStatementQRCode(
     logger.info('Verification code scanned', {
       verificationCode,
       ipAddress,
-      providedFingerprint: providedFingerprint?.substring(0, 16) || 'not-provided',
+      providedFingerprint:
+        providedFingerprint?.substring(0, 16) || 'not-provided',
     });
 
     // 1. Look up verification code in audit logs
@@ -609,7 +669,10 @@ export async function verifyStatementQRCode(
 
     // 2. Check if fingerprint matches (if provided)
     let fingerprintMatched = true;
-    if (providedFingerprint && providedFingerprint !== auditLog.sha256_fingerprint) {
+    if (
+      providedFingerprint &&
+      providedFingerprint !== auditLog.sha256_fingerprint
+    ) {
       fingerprintMatched = false;
 
       logger.error('FRAUD ALERT - Fingerprint mismatch!', {

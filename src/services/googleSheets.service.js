@@ -12,7 +12,10 @@
 import logger from '#config/logger.js';
 import { google } from 'googleapis';
 
-const SCOPES = ['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/spreadsheets'];
+const SCOPES = [
+  'https://www.googleapis.com/auth/drive',
+  'https://www.googleapis.com/auth/spreadsheets',
+];
 
 /**
  * GET AUTHENTICATED GOOGLE SHEETS CLIENT
@@ -42,7 +45,8 @@ async function getAuthenticatedClient() {
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_SHEETS_CLIENT_ID || '',
       process.env.GOOGLE_SHEETS_CLIENT_SECRET || '',
-      process.env.GOOGLE_SHEETS_REDIRECT_URL || 'http://localhost:3000/auth/google-callback'
+      process.env.GOOGLE_SHEETS_REDIRECT_URL ||
+        'http://localhost:3000/auth/google-callback'
     );
 
     // Set refresh token if available
@@ -68,6 +72,37 @@ async function getAuthenticatedClient() {
   }
 }
 
+async function getDriveClient() {
+  if (process.env.GOOGLE_SHEETS_SERVICE_ACCOUNT_KEY) {
+    const auth = new google.auth.GoogleAuth({
+      keyFile: process.env.GOOGLE_SHEETS_SERVICE_ACCOUNT_KEY,
+      scopes: SCOPES,
+    });
+    return google.drive({ version: 'v3', auth });
+  }
+
+  const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_SHEETS_CLIENT_ID || '',
+    process.env.GOOGLE_SHEETS_CLIENT_SECRET || '',
+    process.env.GOOGLE_SHEETS_REDIRECT_URL ||
+      'http://localhost:3000/auth/google-callback'
+  );
+
+  if (process.env.GOOGLE_SHEETS_REFRESH_TOKEN) {
+    oauth2Client.setCredentials({
+      refresh_token: process.env.GOOGLE_SHEETS_REFRESH_TOKEN,
+    });
+  }
+
+  if (process.env.GOOGLE_SHEETS_ACCESS_TOKEN) {
+    oauth2Client.setCredentials({
+      access_token: process.env.GOOGLE_SHEETS_ACCESS_TOKEN,
+    });
+  }
+
+  return google.drive({ version: 'v3', auth: oauth2Client });
+}
+
 /**
  * GENERATE OAUTH2 AUTHORIZATION URL
  * Returns URL for user to authorize PayMe app
@@ -79,7 +114,8 @@ export function getGoogleAuthUrl() {
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_SHEETS_CLIENT_ID || '',
     process.env.GOOGLE_SHEETS_CLIENT_SECRET || '',
-    process.env.GOOGLE_SHEETS_REDIRECT_URL || 'http://localhost:3000/auth/google-callback'
+    process.env.GOOGLE_SHEETS_REDIRECT_URL ||
+      'http://localhost:3000/auth/google-callback'
   );
 
   return oauth2Client.generateAuthUrl({
@@ -101,7 +137,8 @@ export async function exchangeAuthCode(code) {
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_SHEETS_CLIENT_ID || '',
       process.env.GOOGLE_SHEETS_CLIENT_SECRET || '',
-      process.env.GOOGLE_SHEETS_REDIRECT_URL || 'http://localhost:3000/auth/google-callback'
+      process.env.GOOGLE_SHEETS_REDIRECT_URL ||
+        'http://localhost:3000/auth/google-callback'
     );
 
     const { tokens } = await oauth2Client.getToken(code);
@@ -131,7 +168,7 @@ export async function exchangeAuthCode(code) {
 export async function getOrCreateBusinessSheet(businessId, businessName) {
   try {
     const sheets = await getAuthenticatedClient();
-    const drive = google.drive({ version: 'v3' });
+    const drive = await getDriveClient();
 
     const sheetName = `PayMe_${businessName}_${businessId}`;
 
@@ -148,7 +185,13 @@ export async function getOrCreateBusinessSheet(businessId, businessName) {
         businessId,
         sheetId: searchResults.data.files[0].id,
       });
-      return searchResults.data.files[0].id;
+      const existingId = searchResults.data.files[0].id;
+      return {
+        sheetId: 0,
+        spreadsheetId: existingId,
+        sheetName,
+        webViewLink: `https://docs.google.com/spreadsheets/d/${existingId}/edit`,
+      };
     }
 
     // Create new sheet if not found
@@ -215,11 +258,15 @@ export async function getOrCreateBusinessSheet(businessId, businessName) {
               cell: {
                 userEnteredFormat: {
                   backgroundColor: { red: 0.2, green: 0.2, blue: 0.8 },
-                  textFormat: { bold: true, foregroundColor: { red: 1, green: 1, blue: 1 } },
+                  textFormat: {
+                    bold: true,
+                    foregroundColor: { red: 1, green: 1, blue: 1 },
+                  },
                   horizontalAlignment: 'CENTER',
                 },
               },
-              fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
+              fields:
+                'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
             },
           },
         ],
@@ -232,7 +279,12 @@ export async function getOrCreateBusinessSheet(businessId, businessName) {
       sheetName,
     });
 
-    return spreadsheetId;
+    return {
+      sheetId: 0,
+      spreadsheetId,
+      sheetName,
+      webViewLink: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
+    };
   } catch (error) {
     logger.error('Failed to get/create business sheet', {
       error: error.message,
@@ -254,7 +306,11 @@ export async function getOrCreateBusinessSheet(businessId, businessName) {
  * @param {Object} record - Record to sync (with items array)
  * @returns {Promise<Object>} Sync result with row ID
  */
-export async function syncRecordToGoogleSheets(businessId, spreadsheetId, record) {
+export async function syncRecordToGoogleSheets(
+  businessId,
+  spreadsheetId,
+  record
+) {
   try {
     if (!process.env.GOOGLE_SHEETS_ENABLED) {
       logger.debug('Google Sheets sync disabled, skipping');
@@ -272,7 +328,10 @@ export async function syncRecordToGoogleSheets(businessId, spreadsheetId, record
     const rowData = [
       [
         new Date(record.transaction_date).toLocaleDateString('en-KE'),
-        new Date(record.transaction_date).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' }),
+        new Date(record.transaction_date).toLocaleTimeString('en-KE', {
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
         record.type,
         record.category,
         record.description || '',
@@ -347,7 +406,10 @@ export async function batchSyncRecords(businessId, spreadsheetId, records) {
     // Prepare all rows
     const rowsData = records.map(record => [
       new Date(record.transaction_date).toLocaleDateString('en-KE'),
-      new Date(record.transaction_date).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' }),
+      new Date(record.transaction_date).toLocaleTimeString('en-KE', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
       record.type,
       record.category,
       record.description || '',
@@ -411,7 +473,11 @@ export async function batchSyncRecords(businessId, spreadsheetId, records) {
  * @param {Object} dateRange - { start_date, end_date } (optional)
  * @returns {Promise<Array>} Records from Google Sheets
  */
-export async function fetchRecordsFromGoogleSheets(businessId, spreadsheetId, dateRange = {}) {
+export async function fetchRecordsFromGoogleSheets(
+  businessId,
+  spreadsheetId,
+  dateRange = {}
+) {
   try {
     const sheets = await getAuthenticatedClient();
 
@@ -457,8 +523,12 @@ export async function fetchRecordsFromGoogleSheets(businessId, spreadsheetId, da
 
     // Filter by date range if provided
     if (dateRange.start_date || dateRange.end_date) {
-      const startDate = dateRange.start_date ? new Date(dateRange.start_date) : new Date('2000-01-01');
-      const endDate = dateRange.end_date ? new Date(dateRange.end_date) : new Date();
+      const startDate = dateRange.start_date
+        ? new Date(dateRange.start_date)
+        : new Date('2000-01-01');
+      const endDate = dateRange.end_date
+        ? new Date(dateRange.end_date)
+        : new Date();
 
       return records.filter(record => {
         const recordDate = new Date(record.date);

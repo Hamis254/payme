@@ -66,7 +66,7 @@ export const emitNotification = async ({
 
 export const notifications = {
   // Payment notifications
-  paymentComplete: (args) => ({
+  paymentComplete: args => ({
     type: 'payment_complete',
     channel: 'all',
     title: 'Payment Received ✅',
@@ -81,7 +81,7 @@ export const notifications = {
     },
   }),
 
-  paymentFailed: (args) => ({
+  paymentFailed: args => ({
     type: 'payment_failed',
     channel: 'all',
     title: 'Payment Failed ❌',
@@ -96,7 +96,7 @@ export const notifications = {
   }),
 
   // Stock notifications
-  lowStock: (args) => ({
+  lowStock: args => ({
     type: 'low_stock',
     channel: 'sms', // SMS for urgent alerts
     title: '⚠️ Low Stock Alert',
@@ -110,7 +110,7 @@ export const notifications = {
     },
   }),
 
-  stockExpiring: (args) => ({
+  stockExpiring: args => ({
     type: 'stock_expiring',
     channel: 'sms',
     title: '⚠️ Stock Expiring',
@@ -126,7 +126,7 @@ export const notifications = {
   }),
 
   // Sale notifications
-  saleCreated: (args) => ({
+  saleCreated: args => ({
     type: 'sale_created',
     channel: 'in_app',
     title: 'New Sale Created',
@@ -141,7 +141,7 @@ export const notifications = {
   }),
 
   // Wallet notifications
-  walletLow: (args) => ({
+  walletLow: args => ({
     type: 'wallet_low',
     channel: 'sms',
     title: '💰 Low Wallet Balance',
@@ -151,7 +151,7 @@ export const notifications = {
     },
   }),
 
-  walletPurchased: (args) => ({
+  walletPurchased: args => ({
     type: 'wallet_purchased',
     channel: 'all',
     title: '💳 Tokens Purchased',
@@ -164,7 +164,7 @@ export const notifications = {
   }),
 
   // Credit notifications
-  creditPaymentDue: (args) => ({
+  creditPaymentDue: args => ({
     type: 'credit_payment_due',
     channel: 'sms',
     title: '💳 Credit Payment Due',
@@ -180,7 +180,7 @@ export const notifications = {
   }),
 
   // Expense notifications
-  expenseRecorded: (args) => ({
+  expenseRecorded: args => ({
     type: 'expense_recorded',
     channel: 'in_app',
     title: 'Expense Recorded',

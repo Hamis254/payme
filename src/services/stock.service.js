@@ -30,7 +30,9 @@ export const createProduct = async (userId, data) => {
       })
       .returning();
 
-    logger.info(`Product ${product.name} created for business ${data.business_id}`);
+    logger.info(
+      `Product ${product.name} created for business ${data.business_id}`
+    );
     return product;
   } catch (e) {
     logger.error('Error creating product', e);
@@ -137,8 +139,12 @@ export const addStock = async (userId, data) => {
       product_id: data.product_id,
       type: 'purchase',
       quantity_change: String(data.quantity),
-      unit_cost: String(data.buying_price_per_unit || product.buying_price_per_unit),
+      unit_cost: String(
+        data.buying_price_per_unit || product.buying_price_per_unit
+      ),
       reference_type: 'purchase',
+      // initialize remaining_quantity for FIFO tracking
+      remaining_quantity: String(data.quantity),
       reason: data.note || 'Stock purchase',
     });
 
@@ -360,9 +366,11 @@ export const getFullInventoryForBusiness = async (userId, businessId) => {
  * Gets purchase movements in chronological order and deducts from oldest first
  * Returns array of deductions per batch/purchase for profit calculation
  */
-export const deductStockFIFO = async (productId, quantity) => {
+export const deductStockFIFO = async (productId, quantity, trx = null) => {
   try {
-    const [product] = await db
+    const client = trx || db;
+
+    const [product] = await client
       .select()
       .from(products)
       .where(eq(products.id, productId))
@@ -378,7 +386,7 @@ export const deductStockFIFO = async (productId, quantity) => {
     }
 
     // Get all purchase movements in FIFO order (oldest first)
-    const purchases = await db
+    const purchases = await client
       .select()
       .from(stockMovements)
       .where(
@@ -396,11 +404,16 @@ export const deductStockFIFO = async (productId, quantity) => {
     for (const purchase of purchases) {
       if (remainingQty <= 0) break;
 
-      const purchaseQty = Number(purchase.quantity_change) || 0;
+      // Use remaining_quantity if present (updated by FIFO), otherwise fall back to original quantity_change
+      const availableQty =
+        typeof purchase.remaining_quantity !== 'undefined' &&
+        purchase.remaining_quantity !== null
+          ? Number(purchase.remaining_quantity)
+          : Number(purchase.quantity_change) || 0;
       const unitCost = Number(purchase.unit_cost) || 0;
 
-      if (purchaseQty > 0) {
-        const deductQty = Math.min(remainingQty, purchaseQty);
+      if (availableQty > 0) {
+        const deductQty = Math.min(remainingQty, availableQty);
 
         deductions.push({
           batch_id: purchase.id, // Use movement ID as batch ID
@@ -409,6 +422,18 @@ export const deductStockFIFO = async (productId, quantity) => {
           total_cost: deductQty * unitCost,
           purchase_date: purchase.created_at,
         });
+
+        // Decrement remaining_quantity on the purchase movement
+        try {
+          const newRemaining = Number((availableQty - deductQty).toFixed(3));
+          await client
+            .update(stockMovements)
+            .set({ remaining_quantity: String(newRemaining) })
+            .where(eq(stockMovements.id, purchase.id));
+        } catch (uErr) {
+          // Log and continue; don't abort the whole deduction if update fails
+          logger.error('Failed to update purchase remaining_quantity', uErr);
+        }
 
         remainingQty -= deductQty;
       }

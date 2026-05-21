@@ -1,78 +1,208 @@
-<div style="font-family: 'Inter', sans-serif;">
-
-    <h3 style="color: #054d32; font-size: 13px; margin-bottom: 8px;">SALES REVENUE SUMMARY</h3>
-    <table style="width: 100%; border-collapse: collapse; margin-bottom: 25px; font-size: 13px;">
-        <tr style="background: #f2f2f2; font-weight: 700;">
-            <td style="padding: 10px; border: 1px solid #ddd; width: 60%;">PAYMENT METHOD (MONEY-IN)</td>
-            <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">REVENUE RECEIVED IN KSH</td>
-        </tr>
-        <tr>
-            <td style="padding: 10px; border: 1px solid #ddd;">CASH</td>
-            <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">{{cash_total}}</td>
-        </tr>
-        <tr>
-            <td style="padding: 10px; border: 1px solid #ddd;">MPESA</td>
-            <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">{{mpesa_total}}</td>
-        </tr>
-        <tr>
-            <td style="padding: 10px; border: 1px solid #ddd;">HIGHER PURCHASE</td>
-            <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">{{hp_total}}</td>
-        </tr>
-        <tr style="font-weight: 900; background: #e8f5e9;">
-            <td style="padding: 10px; border: 1px solid #ddd;">TOTALS</td>
-            <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">{{gross_revenue}}</td>
-        </tr>
-    </table>
-
-    <h3 style="color: #c62828; font-size: 13px; margin-bottom: 8px;">MONEY-OUT SUMMARY</h3>
-    <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 13px;">
-        <tr>
-            <td style="padding: 10px; border: 1px solid #ddd; width: 60%;">EXPENSES</td>
-            <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">{{expense_total}}</td>
-        </tr>
-        <tr>
-            <td style="padding: 10px; border: 1px solid #ddd;">SPOILED STOCK</td>
-            <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">{{spoiled_total}}</td>
-        </tr>
-        <tr>
-            <td style="padding: 10px; border: 1px solid #ddd;">CREDIT (LENT OUT)</td>
-            <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">{{credit_lent}}</td>
-        </tr>
-        <tr style="font-weight: 900; background: #fff5f5; color: #c62828;">
-            <td style="padding: 10px; border: 1px solid #ddd;">TOTAL MONEY-OUT</td>
-            <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">{{total_money_out}}</td>
-        </tr>
-        <tr style="font-weight: 900; background: #e8f5e9; color: #054d32; font-size: 16px;">
-            <td style="padding: 15px; border: 2px solid #054d32;">TOTAL MONEY IN HAND</td>
-            <td style="padding: 15px; border: 2px solid #054d32; text-align: right;">Ksh {{money_in_hand}}</td>
-        </tr>
-    </table>
-
-    <h3 style="color: #333; font-size: 13px; margin-bottom: 10px; text-transform: uppercase;">Detailed Sales Statement</h3>
-    <table style="width: 100%; border-collapse: collapse; font-size: 10px;">
-        <thead>
-            <tr style="background: #054d32; color: white;">
-                <th style="padding: 8px; border: 1px solid #054d32; text-align: left;">PRODUCT</th>
-                <th style="padding: 8px; border: 1px solid #054d32;">QUANTITY</th>
-                <th style="padding: 8px; border: 1px solid #054d32;">PAYMENT</th>
-                <th style="padding: 8px; border: 1px solid #054d32;">SENDER PHONE</th>
-                <th style="padding: 8px; border: 1px solid #054d32;">TRANS ID</th>
-                <th style="padding: 8px; border: 1px solid #054d32;">TIMESTAMP</th>
-                <th style="padding: 8px; border: 1px solid #054d32; text-align: right;">AMOUNT (KSH)</th>
-            </tr>
-        </thead>
-        <tbody>
-            {{#each transactions}}
-            <tr style="border-bottom: 1px solid #ddd;">
-                <td style="padding: 8px;">{{this.product}}</td>
-                <td style="padding: 8px; text-align: center;">{{this.qty}}</td>
-                <td style="padding: 8px; text-align: center;">{{this.method}}</td>
-                <td style="padding: 8px; text-align: center;">{{this.phone}}</td>
-                <td style="padding: 8px; font-family: monospace;">{{this.tx_id}}</td>
-                <td style="padding: 8px; text-align: center;">{{this.time}}</td>
-                <td style="padding: 8px; text-align: right; font-weight: 700;">{{this.amount}}</td>
-            </tr>
-            {{/each}}
-        </tbody>
-    </table>
+<!-- ══════════════════════════════════════════ -->
+<!-- SECTION 1: REVENUE SUMMARY                -->
+<!-- ══════════════════════════════════════════ -->
+<div class="no-break">
+  <div class="section-title green">1. REVENUE SUMMARY (MONEY IN)</div>
+  <table>
+    <tr>
+      <th style="width: 60%">REVENUE SOURCE</th>
+      <th style="width: 20%" class="right">TRANSACTIONS</th>
+      <th style="width: 20%" class="right">AMOUNT (KSH)</th>
+    </tr>
+    <tr>
+      <td>Cash Sales</td>
+      <td class="right">{{cash_count}}</td>
+      <td class="right">{{cash_total}}</td>
+    </tr>
+    <tr>
+      <td>M-Pesa Payments</td>
+      <td class="right">{{mpesa_count}}</td>
+      <td class="right">{{mpesa_total}}</td>
+    </tr>
+    <tr>
+      <td>Credit Sales (goods given, payment pending)</td>
+      <td class="right">{{credit_count}}</td>
+      <td class="right">{{credit_lent}}</td>
+    </tr>
+    <tr>
+      <td>Hire Purchase Agreements</td>
+      <td class="right">{{hp_count}}</td>
+      <td class="right">{{hp_total}}</td>
+    </tr>
+    <tr class="total-green">
+      <td>GROSS REVENUE</td>
+      <td class="right">{{total_transactions}}</td>
+      <td class="right">{{gross_revenue}}</td>
+    </tr>
+  </table>
 </div>
+
+<!-- ══════════════════════════════════════════ -->
+<!-- SECTION 2: COST OF GOODS & GROSS PROFIT  -->
+<!-- ══════════════════════════════════════════ -->
+<div class="no-break">
+  <div class="section-title dark">2. COST OF GOODS SOLD &amp; GROSS PROFIT</div>
+  <table>
+    <tr>
+      <th style="width: 70%">ITEM</th>
+      <th style="width: 30%" class="right">AMOUNT (KSH)</th>
+    </tr>
+    <tr>
+      <td>Gross Revenue</td>
+      <td class="right">{{gross_revenue}}</td>
+    </tr>
+    <tr>
+      <td>Cost of Goods Sold (COGS — FIFO weighted average)</td>
+      <td class="right" style="color: #b71c1c">— {{total_cogs}}</td>
+    </tr>
+    <tr class="subtotal">
+      <td>GROSS PROFIT</td>
+      <td class="right">{{gross_profit}}</td>
+    </tr>
+    <tr>
+      <td style="color: #666; font-size: 8pt; padding-left: 16px">
+        Gross Profit Margin
+      </td>
+      <td class="right" style="color: #666; font-size: 8pt">
+        {{gross_margin_percent}}%
+      </td>
+    </tr>
+  </table>
+</div>
+
+<!-- ══════════════════════════════════════════ -->
+<!-- SECTION 3: OPERATING EXPENSES & LOSSES   -->
+<!-- ══════════════════════════════════════════ -->
+<div class="no-break">
+  <div class="section-title red">
+    3. OPERATING EXPENSES &amp; LOSSES (MONEY OUT)
+  </div>
+  <table>
+    <tr>
+      <th style="width: 70%">EXPENSE CATEGORY</th>
+      <th style="width: 30%" class="right">AMOUNT (KSH)</th>
+    </tr>
+    <tr>
+      <td>Operating Expenses (rent, salaries, utilities, etc.)</td>
+      <td class="right">{{expense_total}}</td>
+    </tr>
+    <tr>
+      <td>Spoiled / Expired Stock Write-off</td>
+      <td class="right">{{spoiled_total}}</td>
+    </tr>
+    <tr class="total-red">
+      <td>TOTAL DEDUCTIONS</td>
+      <td class="right">{{total_money_out}}</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ══════════════════════════════════════════ -->
+<!-- SECTION 4: NET PROFIT SUMMARY            -->
+<!-- ══════════════════════════════════════════ -->
+<div class="no-break">
+  <div class="section-title green">4. NET PROFIT &amp; CASH POSITION</div>
+  <table>
+    <tr>
+      <th style="width: 70%">ITEM</th>
+      <th style="width: 30%" class="right">AMOUNT (KSH)</th>
+    </tr>
+    <tr>
+      <td>Gross Profit</td>
+      <td class="right">{{gross_profit}}</td>
+    </tr>
+    <tr>
+      <td>Less: Total Deductions</td>
+      <td class="right" style="color: #b71c1c">— {{total_money_out}}</td>
+    </tr>
+    <tr class="total-net">
+      <td>NET PROFIT</td>
+      <td class="right">{{net_profit}}</td>
+    </tr>
+    <tr>
+      <td style="font-size: 8pt; color: #666; padding-left: 16px">
+        Net Profit Margin
+      </td>
+      <td class="right" style="font-size: 8pt; color: #666">
+        {{net_margin_percent}}%
+      </td>
+    </tr>
+    <tr class="subtotal">
+      <td>CASH IN HAND (Cash + M-Pesa less expenses &amp; spoilage)</td>
+      <td class="right">{{money_in_hand}}</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ══════════════════════════════════════════ -->
+<!-- SECTION 5: RECEIVABLES                   -->
+<!-- ══════════════════════════════════════════ -->
+<div class="no-break">
+  <div class="section-title dark">5. RECEIVABLES (MONEY OWED TO BUSINESS)</div>
+  <table>
+    <tr>
+      <th style="width: 70%">TYPE</th>
+      <th style="width: 30%" class="right">AMOUNT (KSH)</th>
+    </tr>
+    <tr>
+      <td>Outstanding Credit (repayments not yet received)</td>
+      <td class="right">{{credit_outstanding}}</td>
+    </tr>
+    <tr>
+      <td>Hire Purchase Outstanding Balance</td>
+      <td class="right">{{hp_outstanding}}</td>
+    </tr>
+    <tr>
+      <td>Credit Repayments Received This Period</td>
+      <td class="right" style="color: #054d32">{{credit_repaid}}</td>
+    </tr>
+    <tr>
+      <td>HP Installments Collected This Period</td>
+      <td class="right" style="color: #054d32">{{hp_collected}}</td>
+    </tr>
+    <tr class="subtotal">
+      <td>TOTAL OUTSTANDING RECEIVABLES</td>
+      <td class="right">{{total_receivables}}</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ══════════════════════════════════════════ -->
+<!-- SECTION 6: DETAILED TRANSACTION LEDGER   -->
+<!-- ══════════════════════════════════════════ -->
+<div class="page-break"></div>
+<div class="section-title dark">6. DETAILED TRANSACTION LEDGER</div>
+<table>
+  <thead>
+    <tr>
+      <th style="width: 22%">PRODUCT / ITEM</th>
+      <th style="width: 8%" class="center">QTY</th>
+      <th style="width: 11%" class="center">TYPE</th>
+      <th style="width: 11%" class="center">METHOD</th>
+      <th style="width: 13%" class="center">PHONE</th>
+      <th style="width: 13%" class="mono">TRANS ID</th>
+      <th style="width: 11%" class="center">DATE</th>
+      <th style="width: 11%" class="right">KSH</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{#each transactions}}
+    <tr>
+      <td>{{this.product}}</td>
+      <td class="center">{{this.qty}}</td>
+      <td class="center" style="font-size: 7.5pt">{{this.type}}</td>
+      <td class="center">{{this.method}}</td>
+      <td class="center" style="font-size: 8pt">{{this.phone}}</td>
+      <td class="mono">{{this.tx_id}}</td>
+      <td class="center" style="font-size: 8pt">{{this.time}}</td>
+      <td class="right" style="font-weight: 700">{{this.amount}}</td>
+    </tr>
+    {{/each}}
+  </tbody>
+  <tfoot>
+    <tr class="total-green">
+      <td colspan="7">STATEMENT TOTAL</td>
+      <td class="right">{{gross_revenue}}</td>
+    </tr>
+  </tfoot>
+</table>

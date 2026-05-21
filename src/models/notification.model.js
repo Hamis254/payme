@@ -45,54 +45,52 @@ export const notifications = pgTable('notifications', {
 });
 
 // User notification preferences (SMS/email opt-in)
-export const notificationPreferences = pgTable(
-  'notification_preferences',
-  {
-    id: serial('id').primaryKey(),
-    user_id: integer('user_id')
-      .notNull()
-      .unique()
-      .references(() => users.id, { onDelete: 'cascade' }),
+export const notificationPreferences = pgTable('notification_preferences', {
+  id: serial('id').primaryKey(),
+  user_id: integer('user_id')
+    .notNull()
+    .unique()
+    .references(() => users.id, { onDelete: 'cascade' }),
 
-    // Channel preferences
-    sms_enabled: boolean('sms_enabled').default(true).notNull(),
-    email_enabled: boolean('email_enabled').default(true).notNull(),
-    in_app_enabled: boolean('in_app_enabled').default(true).notNull(),
+  // Channel preferences
+  sms_enabled: boolean('sms_enabled').default(true).notNull(),
+  email_enabled: boolean('email_enabled').default(true).notNull(),
+  in_app_enabled: boolean('in_app_enabled').default(true).notNull(),
 
-    // Notification type preferences
-    payment_notifications: boolean('payment_notifications').default(true).notNull(), // Payment complete, failed
-    stock_notifications: boolean('stock_notifications').default(true).notNull(), // Low stock, expiring
-    sales_notifications: boolean('sales_notifications').default(true).notNull(), // New sale
-    wallet_notifications: boolean('wallet_notifications').default(true).notNull(), // Low balance, purchase
-    credit_notifications: boolean('credit_notifications').default(true).notNull(), // Credit payments due
-    expense_notifications: boolean('expense_notifications').default(true).notNull(), // Expense recorded
-    daily_summary: boolean('daily_summary').default(false).notNull(), // Daily sales summary
+  // Notification type preferences
+  payment_notifications: boolean('payment_notifications')
+    .default(true)
+    .notNull(), // Payment complete, failed
+  stock_notifications: boolean('stock_notifications').default(true).notNull(), // Low stock, expiring
+  sales_notifications: boolean('sales_notifications').default(true).notNull(), // New sale
+  wallet_notifications: boolean('wallet_notifications').default(true).notNull(), // Low balance, purchase
+  credit_notifications: boolean('credit_notifications').default(true).notNull(), // Credit payments due
+  expense_notifications: boolean('expense_notifications')
+    .default(true)
+    .notNull(), // Expense recorded
+  daily_summary: boolean('daily_summary').default(false).notNull(), // Daily sales summary
 
-    // SMS specifics
-    sms_phone: varchar('sms_phone', { length: 20 }), // Phone for SMS (may differ from user phone)
+  // SMS specifics
+  sms_phone: varchar('sms_phone', { length: 20 }), // Phone for SMS (may differ from user phone)
 
-    // Do not disturb
-    quiet_hours_enabled: boolean('quiet_hours_enabled').default(false).notNull(),
-    quiet_start: varchar('quiet_start', { length: 5 }), // HH:mm format, e.g. "22:00"
-    quiet_end: varchar('quiet_end', { length: 5 }), // HH:mm format, e.g. "06:00"
+  // Do not disturb
+  quiet_hours_enabled: boolean('quiet_hours_enabled').default(false).notNull(),
+  quiet_start: varchar('quiet_start', { length: 5 }), // HH:mm format, e.g. "22:00"
+  quiet_end: varchar('quiet_end', { length: 5 }), // HH:mm format, e.g. "06:00"
 
-    created_at: timestamp('created_at').defaultNow().notNull(),
-    updated_at: timestamp('updated_at').defaultNow().notNull(),
-  }
-);
+  created_at: timestamp('created_at').defaultNow().notNull(),
+  updated_at: timestamp('updated_at').defaultNow().notNull(),
+});
 
 // Notification templates (for consistency)
-export const notificationTemplates = pgTable(
-  'notification_templates',
-  {
-    id: serial('id').primaryKey(),
-    type: varchar('type', { length: 50 }).notNull().unique(), // payment_complete, low_stock, etc.
-    title: varchar('title', { length: 255 }).notNull(),
-    sms_template: text('sms_template').notNull(), // {{variable}} format
-    email_subject: varchar('email_subject', { length: 255 }).notNull(),
-    email_template: text('email_template').notNull(), // HTML with {{variable}}
-    is_active: boolean('is_active').default(true).notNull(),
-    created_at: timestamp('created_at').defaultNow().notNull(),
-    updated_at: timestamp('updated_at').defaultNow().notNull(),
-  }
-);
+export const notificationTemplates = pgTable('notification_templates', {
+  id: serial('id').primaryKey(),
+  type: varchar('type', { length: 50 }).notNull().unique(), // payment_complete, low_stock, etc.
+  title: varchar('title', { length: 255 }).notNull(),
+  sms_template: text('sms_template').notNull(), // {{variable}} format
+  email_subject: varchar('email_subject', { length: 255 }).notNull(),
+  email_template: text('email_template').notNull(), // HTML with {{variable}}
+  is_active: boolean('is_active').default(true).notNull(),
+  created_at: timestamp('created_at').defaultNow().notNull(),
+  updated_at: timestamp('updated_at').defaultNow().notNull(),
+});

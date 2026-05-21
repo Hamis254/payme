@@ -184,9 +184,7 @@ export const stripHtmlTags = text => {
  * // Returns: 'John&#x27;s Restaurant &amp; Bar'
  */
 export const sanitizeInput = (input, options = {}) => {
-  const {
-    maxLength = 255,
-  } = options;
+  const { maxLength = 255 } = options;
 
   if (typeof input !== 'string') {
     logger.warn('sanitizeInput called with non-string input', {

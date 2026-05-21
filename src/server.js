@@ -2,6 +2,10 @@ import app from './app.js';
 import logger from '#config/logger.js';
 import http from 'http';
 import { initializeSocket } from '#config/socket.js';
+import {
+  startOfflineSyncJob,
+  stopOfflineSyncJob,
+} from '#services/offlineSyncJob.js';
 
 // ============ ENVIRONMENT VALIDATION ============
 
@@ -11,11 +15,12 @@ const requiredEnvVars = [
   'ARCJET_KEY',
   'MPESA_CONSUMER_KEY',
   'MPESA_CONSUMER_SECRET',
-  'MPESA_PASSKEY', // Passkey for wallet paybill (650880)
+  'MPESA_PASSKEY',
   'MPESA_CALLBACK_URL',
   'MPESA_B2C_SHORTCODE',
   'MPESA_B2C_SECURITY_CREDENTIAL',
   'MPESA_B2C_INITIATOR',
+  'ENCRYPTION_KEY', // ← was missing; encryption.js throws on startup without it
 ];
 
 const missingVars = requiredEnvVars.filter(v => !process.env[v]);
@@ -46,25 +51,34 @@ initializeSocket(server).catch(error => {
 server.listen(PORT, () => {
   logger.info(`Server listening on http://localhost:${PORT}`);
   console.log(`✓ PayMe API running on http://localhost:${PORT}`);
+
+  // Start the offline sync background job AFTER the server is fully up so
+  // the internal HTTP calls the job makes hit a live server.
+  startOfflineSyncJob();
 });
 
 // ============ GRACEFUL SHUTDOWN ============
 
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM signal received: closing HTTP server');
-  server.close(() => {
-    logger.info('HTTP server closed');
-    process.exit(0);
-  });
-});
+const shutdown = signal => {
+  logger.info(`${signal} received — shutting down gracefully`);
 
-process.on('SIGINT', () => {
-  logger.info('SIGINT signal received: closing HTTP server');
+  // Stop the sync job first so in-flight replays can finish
+  stopOfflineSyncJob();
+
   server.close(() => {
     logger.info('HTTP server closed');
     process.exit(0);
   });
-});
+
+  // Force-exit after 10 s if something hangs
+  setTimeout(() => {
+    logger.error('Forced exit after 10 s timeout');
+    process.exit(1);
+  }, 10_000);
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 // ============ GLOBAL ERROR HANDLING ============
 

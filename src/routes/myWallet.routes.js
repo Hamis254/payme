@@ -86,10 +86,6 @@ router.get(
  * Returns: { balance, tokens_added }
  * Authentication: Required (Admin)
  */
-router.post(
-  '/:businessId/add-tokens',
-  authenticateToken,
-  addTokensHandler
-);
+router.post('/:businessId/add-tokens', authenticateToken, addTokensHandler);
 
 export default router;

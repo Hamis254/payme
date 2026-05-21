@@ -66,9 +66,10 @@ export function validateCallbackTimestamp(
     return false;
   }
 
-  const callbackTime = typeof callbackTimestamp === 'string'
-    ? parseInt(callbackTimestamp, 10)
-    : callbackTimestamp;
+  const callbackTime =
+    typeof callbackTimestamp === 'string'
+      ? parseInt(callbackTimestamp, 10)
+      : callbackTimestamp;
 
   const currentTime = Date.now();
   const age = currentTime - callbackTime;
@@ -157,8 +158,15 @@ export function sanitizeCallbackData(callbackData) {
     const lastKey = keys[keys.length - 1];
     if (typeof current[lastKey] === 'string') {
       // Remove control characters and normalize whitespace
-      // eslint-disable-next-line no-control-regex
-      current[lastKey] = current[lastKey].replace(/[\u0000-\u001F\u007F]/g, '').trim();
+
+      current[lastKey] = current[lastKey]
+        .split('')
+        .filter(char => {
+          const code = char.charCodeAt(0);
+          return code >= 0x20 && code !== 0x7f;
+        })
+        .join('')
+        .trim();
     }
   });
 
@@ -261,7 +269,9 @@ export function validateCallback(callbackData, options = {}) {
   // Validate timestamp if enabled
   if (validateTimestamp) {
     const stkCallback = callbackData.Body?.stkCallback || {};
-    const metadata = extractCallbackMetadata(stkCallback.CallbackMetadata?.Item || []);
+    const metadata = extractCallbackMetadata(
+      stkCallback.CallbackMetadata?.Item || []
+    );
 
     if (metadata.transactionTimestamp) {
       if (!validateCallbackTimestamp(metadata.transactionTimestamp)) {

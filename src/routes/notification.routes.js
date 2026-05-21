@@ -1,5 +1,6 @@
 import express from 'express';
 import { authenticateToken } from '#middleware/auth.middleware.js';
+import { validateRequest } from '#middleware/validation.middleware.js';
 import {
   getUserNotifications,
   markAsRead,
@@ -8,10 +9,22 @@ import {
   updatePreferences,
   testNotification,
 } from '#controllers/notification.controller.js';
-import { updatePreferencesSchema, testNotificationSchema } from '#validations/notification.validation.js';
-import { formatValidationError } from '#utils/format.js';
+import {
+  updatePreferencesSchema,
+  testNotificationSchema,
+} from '#validations/notification.validation.js';
 
 const router = express.Router();
+
+const restrictTestNotificationRoute = (_req, res, next) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({
+      error: 'Forbidden',
+      message: 'Test notification endpoint is disabled in production',
+    });
+  }
+  return next();
+};
 
 // ============ AUTHENTICATION REQUIRED ============
 
@@ -28,31 +41,20 @@ router.patch('/:notificationId/read', authenticateToken, markAsRead);
 router.patch('/read/all', authenticateToken, markAllAsRead);
 
 // Update notification preferences
-router.patch('/preferences', authenticateToken, (req, res, next) => {
-  const validationResult = updatePreferencesSchema.safeParse(req.body);
-  if (!validationResult.success) {
-    return res.status(400).json({
-      error: 'Validation failed',
-      details: formatValidationError(validationResult.error),
-    });
-  }
-  req.validatedBody = validationResult.data;
-  req.body = req.validatedBody;
-  next();
-}, updatePreferences);
+router.patch(
+  '/preferences',
+  authenticateToken,
+  validateRequest(updatePreferencesSchema),
+  updatePreferences
+);
 
 // Test send notification (for development)
-router.post('/test', authenticateToken, (req, res, next) => {
-  const validationResult = testNotificationSchema.safeParse(req.body);
-  if (!validationResult.success) {
-    return res.status(400).json({
-      error: 'Validation failed',
-      details: formatValidationError(validationResult.error),
-    });
-  }
-  req.validatedBody = validationResult.data;
-  req.body = req.validatedBody;
-  next();
-}, testNotification);
+router.post(
+  '/test',
+  authenticateToken,
+  restrictTestNotificationRoute,
+  validateRequest(testNotificationSchema),
+  testNotification
+);
 
 export default router;

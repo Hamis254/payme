@@ -1,7 +1,10 @@
 import { z } from 'zod';
 
 export const dashboardQuerySchema = z.object({
-  period: z.enum(['daily', 'weekly', 'monthly', 'yearly']).default('daily').optional(),
+  period: z
+    .enum(['daily', 'weekly', 'monthly', 'yearly'])
+    .default('daily')
+    .optional(),
 });
 
 export const metricsQuerySchema = z.object({
@@ -19,7 +22,10 @@ export const metricsQuerySchema = z.object({
     'expenses',
     'customers',
   ]),
-  period: z.enum(['daily', 'weekly', 'monthly', 'yearly']).default('daily').optional(),
+  period: z
+    .enum(['daily', 'weekly', 'monthly', 'yearly'])
+    .default('daily')
+    .optional(),
   limit: z.coerce.number().positive().default(10).optional(),
 });
 
@@ -41,5 +47,8 @@ export const trendQuerySchema = z.object({
 
 export const exportQuerySchema = z.object({
   format: z.enum(['json', 'csv']).default('json').optional(),
-  period: z.enum(['daily', 'weekly', 'monthly', 'yearly']).default('daily').optional(),
+  period: z
+    .enum(['daily', 'weekly', 'monthly', 'yearly'])
+    .default('daily')
+    .optional(),
 });

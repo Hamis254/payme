@@ -61,6 +61,13 @@ export const stockMovements = pgTable('stock_movements', {
   // Reference to related record (e.g., sale_id for sales)
   reference_type: varchar('reference_type', { length: 50 }), // 'sale', 'manual', etc.
   reference_id: integer('reference_id'),
+  // For sale movements that consume a purchase batch, link to that purchase movement id
+  batch_id: integer('batch_id'),
+  // Remaining quantity for purchase batches (used by FIFO deduction)
+  remaining_quantity: decimal('remaining_quantity', {
+    precision: 12,
+    scale: 3,
+  }),
   // Reason/note
   reason: text('reason'),
   created_at: timestamp('created_at').defaultNow().notNull(),

@@ -230,14 +230,10 @@ export async function addNoteHandler(req, res, next) {
       });
     }
 
-    const note = await addNote(
-      parseInt(customerId),
-      parseInt(businessId),
-      {
-        ...validationResult.data,
-        created_by: req.user?.id,
-      }
-    );
+    const note = await addNote(parseInt(customerId), parseInt(businessId), {
+      ...validationResult.data,
+      created_by: req.user?.id,
+    });
 
     return res.status(201).json({
       message: 'Note added successfully',

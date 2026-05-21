@@ -1,10 +1,10 @@
 /**
  * Payment Configuration Model
  * Stores per-business M-Pesa credentials for STK Push
- * 
+ *
  * Allows each business to configure their own paybill or till number
  * for customer payments via M-Pesa Daraja API
- * 
+ *
  * Daraja API (M-Pesa Express STK Push) requires:
  * - BusinessShortCode: till number or paybill (PartyB)
  * - Passkey: B2C passkey from Daraja portal
@@ -24,7 +24,7 @@ import { businesses } from '#models/setting.model.js';
 
 export const paymentConfigs = pgTable('payment_configs', {
   id: serial('id').primaryKey(),
-  
+
   business_id: integer('business_id')
     .notNull()
     .references(() => businesses.id, { onDelete: 'cascade' }),

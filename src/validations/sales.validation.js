@@ -27,10 +27,10 @@ const phonePreprocess = val => {
 
 const phoneSchema = z.preprocess(
   phonePreprocess,
-  z.string()
-    .regex(/^\+2547\d{8}$/, {
-      message: 'Phone must be a valid Kenyan mobile number in E.164 format (+2547XXXXXXXX)',
-    })
+  z.string().regex(/^\+2547\d{8}$/, {
+    message:
+      'Phone must be a valid Kenyan mobile number in E.164 format (+2547XXXXXXXX)',
+  })
 );
 
 /**

@@ -54,8 +54,7 @@ export const recordSpoilageSchema = z.object({
     .enum(['stock_count', 'delivery_check', 'manual'])
     .optional()
     .describe('Source of spoilage discovery'),
-  referenceId: z
-    .coerce
+  referenceId: z.coerce
     .number()
     .int()
     .positive()
@@ -79,7 +78,11 @@ export const listSpoilageSchema = z.object({
     .min(1, 'Limit must be at least 1')
     .max(100, 'Limit must not exceed 100')
     .default(50),
-  offset: z.coerce.number().int().min(0, 'Offset must be non-negative').default(0),
+  offset: z.coerce
+    .number()
+    .int()
+    .min(0, 'Offset must be non-negative')
+    .default(0),
 });
 
 /**

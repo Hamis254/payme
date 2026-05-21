@@ -1,5 +1,6 @@
 import express from 'express';
 import { authenticateToken } from '#middleware/auth.middleware.js';
+import { validateBusinessId } from '#middleware/businessId.middleware.js';
 import {
   createCustomerHandler,
   getCustomerHandler,
@@ -21,23 +22,67 @@ const router = express.Router();
 router.use(authenticateToken);
 
 // List and search
-router.get('/:businessId/', listCustomersHandler);
-router.get('/:businessId/search', searchCustomersHandler);
-router.get('/:businessId/repeat', getRepeatCustomersHandler);
+router.get('/:businessId', validateBusinessId('params'), listCustomersHandler);
+router.get(
+  '/:businessId/search',
+  validateBusinessId('params'),
+  searchCustomersHandler
+);
+router.get(
+  '/:businessId/repeat',
+  validateBusinessId('params'),
+  getRepeatCustomersHandler
+);
 
 // Single customer operations
-router.post('/:businessId/', createCustomerHandler);
-router.get('/:businessId/:customerId', getCustomerHandler);
-router.patch('/:businessId/:customerId', updateCustomerHandler);
-router.delete('/:businessId/:customerId', deleteCustomerHandler);
+router.post(
+  '/:businessId',
+  validateBusinessId('params'),
+  createCustomerHandler
+);
+router.get(
+  '/:businessId/:customerId',
+  validateBusinessId('params'),
+  getCustomerHandler
+);
+router.patch(
+  '/:businessId/:customerId',
+  validateBusinessId('params'),
+  updateCustomerHandler
+);
+router.delete(
+  '/:businessId/:customerId',
+  validateBusinessId('params'),
+  deleteCustomerHandler
+);
 
 // Customer notes
-router.post('/:businessId/:customerId/notes', addNoteHandler);
-router.get('/:businessId/:customerId/notes', getNotesHandler);
+router.post(
+  '/:businessId/:customerId/notes',
+  validateBusinessId('params'),
+  addNoteHandler
+);
+router.get(
+  '/:businessId/:customerId/notes',
+  validateBusinessId('params'),
+  getNotesHandler
+);
 
 // Customer preferences and metrics
-router.patch('/:businessId/:customerId/preferences', updatePreferencesHandler);
-router.get('/:businessId/:customerId/history', getPurchaseHistoryHandler);
-router.get('/:businessId/:customerId/metrics', getCustomerMetricsHandler);
+router.patch(
+  '/:businessId/:customerId/preferences',
+  validateBusinessId('params'),
+  updatePreferencesHandler
+);
+router.get(
+  '/:businessId/:customerId/history',
+  validateBusinessId('params'),
+  getPurchaseHistoryHandler
+);
+router.get(
+  '/:businessId/:customerId/metrics',
+  validateBusinessId('params'),
+  getCustomerMetricsHandler
+);
 
 export default router;

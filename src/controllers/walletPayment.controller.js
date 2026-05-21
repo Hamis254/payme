@@ -62,7 +62,9 @@ export const initiateWalletPayment = async (req, res, next) => {
       .limit(1);
 
     if (!business) {
-      return res.status(403).json({ error: 'Business not found or access denied' });
+      return res
+        .status(403)
+        .json({ error: 'Business not found or access denied' });
     }
 
     // Verify business is configured for wallet payments
@@ -287,13 +289,13 @@ export const getWalletBalance = async (req, res, next) => {
     const [business] = await db
       .select()
       .from(businesses)
-      .where(
-        and(eq(businesses.id, businessId), eq(businesses.user_id, userId))
-      )
+      .where(and(eq(businesses.id, businessId), eq(businesses.user_id, userId)))
       .limit(1);
 
     if (!business) {
-      return res.status(403).json({ error: 'Business not found or access denied' });
+      return res
+        .status(403)
+        .json({ error: 'Business not found or access denied' });
     }
 
     // Get wallet
@@ -339,13 +341,13 @@ export const getWalletTransactionHistory = async (req, res, next) => {
     const [business] = await db
       .select()
       .from(businesses)
-      .where(
-        and(eq(businesses.id, businessId), eq(businesses.user_id, userId))
-      )
+      .where(and(eq(businesses.id, businessId), eq(businesses.user_id, userId)))
       .limit(1);
 
     if (!business) {
-      return res.status(403).json({ error: 'Business not found or access denied' });
+      return res
+        .status(403)
+        .json({ error: 'Business not found or access denied' });
     }
 
     const transactions = await db
