@@ -1,356 +1,408 @@
 /**
  * =============================================================================
- * MIDDLEWARE: OFFLINE QUEUE
+ * SERVICE: OFFLINE SYNC JOB  (background scheduler)
  * =============================================================================
  *
- * WHAT THIS MIDDLEWARE ACTUALLY DOES
- * ────────────────────────────────────
- * The client (mobile app / PWA) sends an `X-Is-Online: false` header whenever
- * it knows it has no connectivity.  This middleware intercepts that signal
- * BEFORE the route handler runs, saves the full request to the offline_queue
- * table, and returns 202 Accepted immediately.  The route handler never runs.
+ * RESPONSIBILITY
+ * ───────────────
+ * Periodically scans the offline_queue table for pending rows and replays each
+ * operation against the real API endpoint using an internal HTTP call.  This is
+ * the automatic sync mechanism — no Redis, no worker threads, no external queue
+ * service required.
  *
- * When the device comes back online it calls POST /api/offline/sync (the
- * existing route) or the background job in offlineSyncJob picks up the row
- * automatically within the configured interval.
+ * HOW IT WORKS
+ * ─────────────
+ * 1. Every N minutes (default: 5, env: OFFLINE_SYNC_INTERVAL_MS) the job wakes.
+ * 2. Fetches all rows with status = 'pending' in created_at order (FIFO).
+ * 3. For each row it:
+ *    a. Claims the row atomically (UPDATE WHERE status = 'pending' → 'syncing').
+ *       If two job instances race, only one wins — the other skips.
+ *    b. Mints a short-lived JWT for the original user_id so the replayed
+ *       request passes authenticateToken — the original cookie is long gone.
+ *    c. Makes an internal axios call to the stored endpoint with the stored
+ *       request_body and the fresh JWT in the Cookie header.
+ *    d. 2xx  → marks row 'synced', writes sync history.
+ *    e. 409  → idempotency hit → treats as 'synced' (already processed).
+ *    f. 4xx  → marks 'failed', no retry — bad payload won't improve.
+ *    g. 5xx / network error → increments sync_attempts; resets to 'pending'
+ *       for next cycle unless max_retries exhausted, then marks 'failed'.
+ * 4. Cleanup runs every 24 h — deletes 'synced' rows older than
+ *    OFFLINE_SYNC_CLEANUP_HOURS (default: 24).
  *
- * FLOW
- * ─────
- *   Device online  → header absent or X-Is-Online: true  → next() — normal flow
- *   Device offline → X-Is-Online: false                  → queue + 202
- *   Operation type not allowed offline                    → 403
+ * STARTUP / SHUTDOWN
+ * ───────────────────
+ *   // server.js
+ *   import { startOfflineSyncJob, stopOfflineSyncJob } from '#services/offlineSyncJob.js';
  *
- * APPLYING THE MIDDLEWARE
+ *   server.listen(PORT, () => { startOfflineSyncJob(); });
+ *   process.on('SIGTERM', () => { stopOfflineSyncJob(); server.close(...); });
+ *
+ * ENV VARS (all optional)
  * ────────────────────────
- * Add it to routes that make sense to queue offline.  Read-only routes (GET)
- * never need it — the client will just show stale data.
+ *   OFFLINE_SYNC_INTERVAL_MS   = 300000   (5 minutes between cycles)
+ *   OFFLINE_SYNC_BATCH_SIZE    = 50       (rows processed per cycle)
+ *   OFFLINE_SYNC_CLEANUP_HOURS = 24       (prune synced rows older than N hours)
+ *   OFFLINE_SYNC_INTERNAL_URL  = http://localhost:3000
  *
- *   // In payme.routes.js
- *   import { offlineQueueMiddleware } from '#middleware/offline.middleware.js';
- *   router.post('/', offlineQueueMiddleware('sale'), idempotencyMiddleware(), ...);
- *
- *   // In expense.routes.js
- *   router.post('/:businessId/record', offlineQueueMiddleware('expense'), ...);
- *
- * CLIENT CONTRACT
- * ────────────────
- * Header the client sends:
- *   X-Is-Online: false          → queue this request
- *   X-Device-Id: <uuid>         → identifies the device (for sync tracking)
- *
- * Response the client gets on queue:
- *   HTTP 202 Accepted
- *   {
- *     "queued": true,
- *     "queue_id": 42,
- *     "operation_id": "sale_1748000000000",
- *     "message": "Saved offline. Will sync automatically when connection returns.",
- *     "sync_status": { "status": "pending", "queue_id": 42 }
- *   }
- *
- * @module middleware/offline
+ * @module services/offlineSyncJob
  * =============================================================================
  */
 
+import axios from 'axios';
 import logger from '#config/logger.js';
 import { db } from '#config/database.js';
-import { offlineQueue, offlineConfig } from '#models/offlineQueue.model.js';
-import { eq } from 'drizzle-orm';
+import { offlineQueue, offlineSyncHistory } from '#models/offlineQueue.model.js';
+import { eq, and, asc, lte } from 'drizzle-orm';
+import { jwttoken } from '#utils/jwt.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HELPERS
+// CONFIGURATION
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Map of operation types to their offline permission field in offlineConfig.
- * If a type isn't listed here it is NOT queueable offline.
- */
-const OFFLINE_PERMISSION_MAP = {
-  sale: 'allow_sales_offline',
-  expense: 'allow_expenses_offline',
-  stock_adjustment: 'allow_stock_adjustment_offline',
+const CONFIG = {
+  INTERVAL_MS:         parseInt(process.env.OFFLINE_SYNC_INTERVAL_MS   ?? '300000', 10),
+  BATCH_SIZE:          parseInt(process.env.OFFLINE_SYNC_BATCH_SIZE     ?? '50',     10),
+  CLEANUP_AFTER_HOURS: parseInt(process.env.OFFLINE_SYNC_CLEANUP_HOURS  ?? '24',     10),
+  INTERNAL_BASE_URL:   process.env.OFFLINE_SYNC_INTERNAL_URL ?? 'http://localhost:3000',
+  REQUEST_TIMEOUT_MS:  15000,
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────────────────────────────────────
+
+let syncIntervalHandle    = null;
+let cleanupIntervalHandle = null;
+let isRunning             = false; // prevents overlapping cycles
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INTERNAL HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Fetch the business's offline config row (if it exists).
- * Returns null when no config row has been created — caller treats that as
- * "default config" (sales and expenses allowed, stock adjustment not).
+ * Mint a 2-minute JWT for the original user so the replayed request passes
+ * authenticateToken.  The job signs with the same JWT_SECRET the middleware
+ * validates — no special bypass, full auth chain runs normally.
  *
- * @param {number} businessId
- * @returns {Promise<Object|null>}
+ * @param {number} userId
+ * @param {string} [role='user']
+ * @returns {string} signed JWT
  */
-const getOfflineConfigForBusiness = async businessId => {
+const mintInternalJwt = (userId, role = 'user') =>
+  jwttoken.sign({ id: userId, name: 'offline_sync', role });
+
+/**
+ * Atomically claim a pending row by flipping status to 'syncing'.
+ * Returns false if another instance already claimed it.
+ *
+ * @param {number} queueId
+ * @returns {Promise<boolean>}
+ */
+const claimRow = async queueId => {
   try {
-    const [config] = await db
-      .select()
-      .from(offlineConfig)
-      .where(eq(offlineConfig.business_id, businessId))
-      .limit(1);
-    return config ?? null;
+    const result = await db
+      .update(offlineQueue)
+      .set({ status: 'syncing' })
+      .where(
+        and(
+          eq(offlineQueue.id, queueId),
+          eq(offlineQueue.status, 'pending') // conditional update — only wins once
+        )
+      )
+      .returning({ id: offlineQueue.id });
+
+    return result.length > 0;
   } catch (err) {
-    logger.error('offlineQueueMiddleware: failed to read offline config', {
-      businessId,
-      error: err.message,
-    });
-    return null; // fail open — default permissions apply
-  }
-};
-
-/**
- * Check whether a given operation type is permitted to be queued offline for
- * this business, based on their offlineConfig row.
- *
- * @param {string}      operationType  - 'sale' | 'expense' | 'stock_adjustment'
- * @param {Object|null} config         - offlineConfig row, or null for defaults
- * @returns {boolean}
- */
-const isOperationAllowedOffline = (operationType, config) => {
-  const permissionField = OFFLINE_PERMISSION_MAP[operationType];
-
-  if (!permissionField) {
-    // Unknown operation type — not supported offline
+    logger.error('offlineSyncJob: failed to claim row', { queueId, error: err.message });
     return false;
   }
-
-  if (!config) {
-    // No config row → use hardcoded defaults:
-    // sales ✓  expenses ✓  stock_adjustment ✗
-    return operationType !== 'stock_adjustment';
-  }
-
-  // offlineConfig.offline_mode_enabled = false overrides everything
-  if (!config.offline_mode_enabled) return false;
-
-  return config[permissionField] === true;
 };
 
 /**
- * Insert a row into offline_queue.
- * Returns the created row.
+ * Make the internal HTTP call that replays the queued operation.
  *
- * @param {Object} params
- * @returns {Promise<Object>} the created queue row
+ * @param {Object} row - offline_queue row
+ * @returns {Promise<{ statusCode: number, data: Object }>}
  */
-const insertIntoQueue = async ({
-  userId,
-  businessId,
-  operationType,
-  operationId,
-  endpoint,
-  method,
-  requestBody,
-  requestHeaders,
-  deviceId,
-}) => {
-  const [row] = await db
-    .insert(offlineQueue)
-    .values({
-      user_id: userId,
-      business_id: businessId,
-      operation_type: operationType,
-      operation_id: operationId,
-      endpoint,
-      method,
-      request_body: requestBody,
-      request_headers: requestHeaders,
-      status: 'pending',
-      sync_attempts: 0,
-      executed_at: new Date(),
-      device_id: deviceId ?? null,
-    })
-    .returning();
+const replayOperation = async row => {
+  const token = mintInternalJwt(row.user_id);
 
-  return row;
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MIDDLEWARE FACTORY
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Returns an Express middleware that short-circuits offline requests.
- *
- * @param {string} operationType - 'sale' | 'expense' | 'stock_adjustment'
- *                                  Used for permission checking and labelling
- *                                  the queue row's operation_type column.
- * @returns {import('express').RequestHandler}
- *
- * @example
- * // payme.routes.js
- * router.post('/', offlineQueueMiddleware('sale'), idempotencyMiddleware(), processPayMe);
- *
- * // expense.routes.js
- * router.post('/:businessId/record', offlineQueueMiddleware('expense'), recordExpenseHandler);
- */
-export const offlineQueueMiddleware = (operationType = 'unknown') => {
-  return async (req, res, next) => {
-    // ── Only intercept when the client explicitly says it's offline ──────────
-    // Any value other than the string 'false' is treated as online.
-    const isOffline = req.headers['x-is-online'] === 'false';
-
-    if (!isOffline) {
-      return next(); // device is online — run the handler normally
-    }
-
-    // ── We need a user and a business to queue anything meaningful ───────────
-    const userId = req.user?.id;
-    const businessId =
-      req.business?.id ?? // set by validateBusinessId middleware
-      req.body?.business_id ??
-      req.body?.businessId ??
-      null;
-
-    if (!userId || !businessId) {
-      logger.warn('offlineQueueMiddleware: missing user or business context', {
-        userId,
-        businessId,
-        path: req.path,
-      });
-      // Can't queue without ownership context — fall through to handler which
-      // will return a proper 401/400.
-      return next();
-    }
-
-    // ── Check whether this operation is allowed to be queued offline ─────────
-    const config = await getOfflineConfigForBusiness(businessId);
-
-    if (!isOperationAllowedOffline(operationType, config)) {
-      logger.info('offlineQueueMiddleware: operation not allowed offline', {
-        operationType,
-        businessId,
-        userId,
-      });
-      return res.status(403).json({
-        success: false,
-        queued: false,
-        error: 'Offline not supported for this operation',
-        message: `${operationType} operations cannot be queued for offline sync. Internet connection required.`,
-        offline_available: false,
-      });
-    }
-
-    // ── Build a stable operation ID ──────────────────────────────────────────
-    // Include the user-supplied Idempotency-Key if present so the sync job can
-    // forward it when it replays the request, preserving end-to-end idempotency.
-    const idempotencyKey = req.get('Idempotency-Key');
-    const operationId = idempotencyKey
-      ? `${operationType}_${idempotencyKey}`
-      : `${operationType}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
-    // Strip the cookie header — it contains the JWT token which will have
-    // expired by the time the background job replays this hours later.
-    // The queue row stores user_id so the job can forge a valid auth context.
-    const safeHeaders = {
-      'content-type': req.get('content-type') ?? 'application/json',
-      'x-device-id': req.headers['x-device-id'] ?? null,
-      'idempotency-key': idempotencyKey ?? null,
-    };
-
-    // ── Insert into the queue ────────────────────────────────────────────────
-    try {
-      const queued = await insertIntoQueue({
-        userId,
-        businessId,
-        operationType,
-        operationId,
-        endpoint: req.originalUrl || req.path,
-        method: req.method,
-        requestBody: req.body,
-        requestHeaders: safeHeaders,
-        deviceId: req.headers['x-device-id'] ?? null,
-      });
-
-      logger.info('Operation queued for offline sync', {
-        queueId: queued.id,
-        operationId,
-        operationType,
-        businessId,
-        userId,
-        endpoint: req.path,
-      });
-
-      // ── Return 202 Accepted immediately — do NOT call next() ──────────────
-      return res.status(202).json({
-        success: true,
-        queued: true,
-        queue_id: queued.id,
-        operation_id: queued.operation_id,
-        message:
-          'Saved offline. Will sync automatically when connection returns.',
-        sync_status: {
-          status: 'pending',
-          queue_id: queued.id,
-        },
-      });
-    } catch (dbError) {
-      logger.error('offlineQueueMiddleware: failed to insert queue row', {
-        operationType,
-        businessId,
-        userId,
-        error: dbError.message,
-      });
-
-      // Fail open — let the request reach the handler so the user isn't
-      // completely blocked.  The handler will likely also fail if truly offline,
-      // but that's better than a confusing 500 from the middleware.
-      return next();
-    }
-  };
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// UTILITY MIDDLEWARE (unchanged from original — kept for compatibility)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Attaches device connectivity status to req.deviceStatus.
- * Apply globally in app.js so all handlers can read it.
- */
-export const setDeviceStatus = (req, _res, next) => {
-  const isOnline = req.headers['x-is-online'] !== 'false';
-  const deviceId = req.headers['x-device-id'];
-
-  req.deviceStatus = {
-    deviceId: deviceId ?? null,
-    isOnline,
-    timestamp: new Date(),
+  const headers = {
+    'Content-Type':     'application/json',
+    'Cookie':           `token=${token}`,
+    'X-Offline-Replay': 'true',  // tag so handlers can identify replays in logs
+    'X-Queue-Id':       String(row.id),
+    // Forward the original Idempotency-Key — deduplicates correctly on replay
+    ...(row.request_headers?.['idempotency-key']
+      ? { 'Idempotency-Key': row.request_headers['idempotency-key'] }
+      : {}),
   };
 
-  next();
+  const response = await axios({
+    method:         row.method.toLowerCase(),
+    url:            `${CONFIG.INTERNAL_BASE_URL}${row.endpoint}`,
+    data:           row.request_body,
+    headers,
+    timeout:        CONFIG.REQUEST_TIMEOUT_MS,
+    validateStatus: () => true, // never throw on HTTP error status
+  });
+
+  return { statusCode: response.status, data: response.data };
 };
 
 /**
- * Blocks requests from devices that declare themselves offline, when the
- * endpoint cannot be deferred (e.g. M-Pesa STK push requires live network).
+ * Write a row to offline_sync_history (non-fatal — never blocks the sync loop).
  */
-export const requireOnline = (req, res, next) => {
-  const isOnline = req.headers['x-is-online'] !== 'false';
-
-  if (!isOnline) {
-    return res.status(503).json({
-      success: false,
-      error: 'Internet connection required',
-      message: 'This operation cannot be performed offline.',
-      retryable: true,
+const writeSyncHistory = async ({ queueId, userId, status, serverStatus, responseData, durationMs, errorMessage, deviceId }) => {
+  try {
+    await db.insert(offlineSyncHistory).values({
+      queue_id:         queueId,
+      user_id:          userId,
+      sync_type:        'automatic',
+      status,
+      server_status:    serverStatus ?? null,
+      response_data:    responseData ?? null,
+      sync_duration_ms: durationMs,
+      started_at:       new Date(Date.now() - durationMs),
+      completed_at:     new Date(),
+      error_message:    errorMessage ?? null,
+      device_id:        deviceId ?? null,
     });
+  } catch (err) {
+    logger.error('offlineSyncJob: failed to write sync history', { queueId, error: err.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CORE: PROCESS ONE ROW
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Process a single queue row end-to-end.
+ *
+ * @param {Object} row
+ * @returns {Promise<'synced'|'failed'|'retrying'|'skipped'>}
+ */
+const processRow = async row => {
+  const started = Date.now();
+
+  const claimed = await claimRow(row.id);
+  if (!claimed) return 'skipped'; // another instance took it
+
+  logger.info('offlineSyncJob: replaying operation', {
+    queueId:       row.id,
+    operationType: row.operation_type,
+    endpoint:      row.endpoint,
+    method:        row.method,
+    userId:        row.user_id,
+    attempt:       row.sync_attempts + 1,
+  });
+
+  try {
+    const { statusCode, data } = await replayOperation(row);
+    const durationMs = Date.now() - started;
+
+    // ── 2xx — success ─────────────────────────────────────────────────────
+    if (statusCode >= 200 && statusCode < 300) {
+      await db.update(offlineQueue).set({
+        status:          'synced',
+        server_response: data,
+        server_id:       data?.id ?? data?.data?.id ?? null,
+        synced_at:       new Date(),
+        sync_attempts:   row.sync_attempts + 1,
+        last_error:      null,
+        error_code:      null,
+      }).where(eq(offlineQueue.id, row.id));
+
+      await writeSyncHistory({ queueId: row.id, userId: row.user_id, status: 'success', serverStatus: statusCode, responseData: data, durationMs, deviceId: row.device_id });
+      logger.info('offlineSyncJob: synced ✓', { queueId: row.id, statusCode, durationMs });
+      return 'synced';
+    }
+
+    // ── 409 — idempotency hit — already processed, treat as synced ────────
+    if (statusCode === 409) {
+      await db.update(offlineQueue).set({
+        status:          'synced',
+        server_response: data,
+        synced_at:       new Date(),
+        sync_attempts:   row.sync_attempts + 1,
+        last_error:      null,
+      }).where(eq(offlineQueue.id, row.id));
+
+      logger.info('offlineSyncJob: 409 idempotency hit — treating as synced', { queueId: row.id });
+      return 'synced';
+    }
+
+    // ── Other 4xx — bad payload, no point retrying ────────────────────────
+    if (statusCode >= 400 && statusCode < 500) {
+      await db.update(offlineQueue).set({
+        status:          'failed',
+        server_response: data,
+        sync_attempts:   row.sync_attempts + 1,
+        last_error:      `HTTP ${statusCode}: ${data?.error ?? data?.message ?? 'Client error'}`,
+        error_code:      'CLIENT_ERROR',
+        failed_at:       new Date(),
+      }).where(eq(offlineQueue.id, row.id));
+
+      await writeSyncHistory({ queueId: row.id, userId: row.user_id, status: 'failed', serverStatus: statusCode, responseData: data, durationMs: Date.now() - started, errorMessage: `HTTP ${statusCode}`, deviceId: row.device_id });
+      logger.warn('offlineSyncJob: permanent failure (4xx)', { queueId: row.id, statusCode });
+      return 'failed';
+    }
+
+    // ── 5xx falls through to catch below ──────────────────────────────────
+    throw new Error(`HTTP ${statusCode} from server`);
+
+  } catch (err) {
+    const durationMs  = Date.now() - started;
+    const newAttempts = row.sync_attempts + 1;
+    const isNetwork   = ['ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT'].includes(err.code) || err.message.includes('timeout');
+    const errorCode   = isNetwork ? 'NETWORK' : 'SERVER_ERROR';
+
+    if (newAttempts >= row.max_retries) {
+      await db.update(offlineQueue).set({
+        status:        'failed',
+        sync_attempts: newAttempts,
+        last_error:    err.message,
+        error_code:    errorCode,
+        failed_at:     new Date(),
+      }).where(eq(offlineQueue.id, row.id));
+
+      await writeSyncHistory({ queueId: row.id, userId: row.user_id, status: 'failed', durationMs, errorMessage: err.message, deviceId: row.device_id });
+      logger.warn('offlineSyncJob: max retries exhausted', { queueId: row.id, attempts: newAttempts, error: err.message });
+      return 'failed';
+    }
+
+    // Reset to pending for next cycle
+    await db.update(offlineQueue).set({
+      status:        'pending',
+      sync_attempts: newAttempts,
+      last_error:    err.message,
+      error_code:    errorCode,
+    }).where(eq(offlineQueue.id, row.id));
+
+    await writeSyncHistory({ queueId: row.id, userId: row.user_id, status: 'failed', durationMs, errorMessage: err.message, deviceId: row.device_id });
+    logger.info('offlineSyncJob: will retry', { queueId: row.id, attemptsUsed: newAttempts, remaining: row.max_retries - newAttempts });
+    return 'retrying';
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SYNC CYCLE
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Run one full sync cycle: fetch pending rows → process each → log summary.
+ * Exported so the manual /api/offline/sync route can trigger it on demand.
+ *
+ * @returns {Promise<{ synced: number, failed: number, retrying: number, skipped: number, total: number }>}
+ */
+export const runSyncCycle = async () => {
+  if (isRunning) {
+    logger.debug('offlineSyncJob: previous cycle still running — skipping');
+    return { synced: 0, failed: 0, retrying: 0, skipped: 0, total: 0 };
   }
 
-  next();
+  isRunning = true;
+  const cycleStart = Date.now();
+  const results    = { synced: 0, failed: 0, retrying: 0, skipped: 0 };
+
+  try {
+    const rows = await db
+      .select()
+      .from(offlineQueue)
+      .where(eq(offlineQueue.status, 'pending'))
+      .orderBy(asc(offlineQueue.created_at))
+      .limit(CONFIG.BATCH_SIZE);
+
+    if (rows.length === 0) {
+      logger.debug('offlineSyncJob: queue empty');
+      return { ...results, total: 0 };
+    }
+
+    logger.info('offlineSyncJob: cycle started', { rowCount: rows.length });
+
+    // Sequential processing — predictable logs, avoids DB connection storms.
+    // Switch to p-limit(N) here if throughput becomes a bottleneck.
+    for (const row of rows) {
+      const outcome = await processRow(row);
+      results[outcome] = (results[outcome] ?? 0) + 1;
+    }
+
+    logger.info('offlineSyncJob: cycle complete', {
+      ...results,
+      total: rows.length,
+      durationMs: Date.now() - cycleStart,
+    });
+
+    return { ...results, total: rows.length };
+  } catch (err) {
+    logger.error('offlineSyncJob: unhandled error in cycle', { error: err.message, stack: err.stack });
+    return { ...results, total: 0 };
+  } finally {
+    isRunning = false;
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLEANUP
+// ─────────────────────────────────────────────────────────────────────────────
+
+const runCleanup = async () => {
+  const cutoff = new Date(Date.now() - CONFIG.CLEANUP_AFTER_HOURS * 60 * 60 * 1000);
+  try {
+    const deleted = await db
+      .delete(offlineQueue)
+      .where(and(eq(offlineQueue.status, 'synced'), lte(offlineQueue.synced_at, cutoff)))
+      .returning({ id: offlineQueue.id });
+
+    logger.info('offlineSyncJob: cleanup complete', { deletedCount: deleted.length, olderThanHours: CONFIG.CLEANUP_AFTER_HOURS });
+  } catch (err) {
+    logger.error('offlineSyncJob: cleanup failed', { error: err.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PUBLIC API
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Start the background sync job.
+ * Runs immediately on startup to flush anything queued before last restart,
+ * then on a fixed interval.  Safe to call multiple times — subsequent calls
+ * are no-ops.
+ */
+export const startOfflineSyncJob = () => {
+  if (syncIntervalHandle) {
+    logger.warn('offlineSyncJob: already running — ignoring duplicate start');
+    return;
+  }
+
+  logger.info('offlineSyncJob: starting', {
+    intervalMs:        CONFIG.INTERVAL_MS,
+    batchSize:         CONFIG.BATCH_SIZE,
+    cleanupAfterHours: CONFIG.CLEANUP_AFTER_HOURS,
+    internalBaseUrl:   CONFIG.INTERNAL_BASE_URL,
+  });
+
+  // Flush immediately on startup
+  runSyncCycle().catch(err =>
+    logger.error('offlineSyncJob: initial cycle failed', { error: err.message })
+  );
+
+  syncIntervalHandle    = setInterval(runSyncCycle, CONFIG.INTERVAL_MS);
+  cleanupIntervalHandle = setInterval(runCleanup, 24 * 60 * 60 * 1000);
 };
 
 /**
- * Adds offline-capability hint headers to every response so the client knows
- * this server supports the offline queue protocol.
+ * Stop the sync job gracefully.
+ * Call inside SIGTERM / SIGINT handlers before closing the HTTP server.
  */
-export const offlineCapabilityHeaders = (_req, res, next) => {
-  res.set('X-Sync-Capable', 'true');
-  res.set('X-Offline-Protocol-Version', '1');
-  next();
+export const stopOfflineSyncJob = () => {
+  if (syncIntervalHandle)    clearInterval(syncIntervalHandle);
+  if (cleanupIntervalHandle) clearInterval(cleanupIntervalHandle);
+  syncIntervalHandle    = null;
+  cleanupIntervalHandle = null;
+  logger.info('offlineSyncJob: stopped');
 };
 
-export default {
-  offlineQueueMiddleware,
-  setDeviceStatus,
-  requireOnline,
-  offlineCapabilityHeaders,
-};
+export default { startOfflineSyncJob, stopOfflineSyncJob, runSyncCycle };

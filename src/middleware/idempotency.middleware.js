@@ -61,7 +61,7 @@
  */
 
 import { db } from '#config/database.js';
-import { idempotencyKeys } from '#models/idempotencyKey.model.js';
+import { idempotencyKeys } from '#models/idempotency.model.js';
 import { eq, and, gt, lt } from 'drizzle-orm';
 import logger from '#config/logger.js';
 

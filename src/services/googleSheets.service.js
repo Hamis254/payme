@@ -1,538 +1,476 @@
 /**
  * =============================================================================
- * GOOGLE SHEETS SERVICE: Real-time data synchronization
+ * SERVICE: GOOGLE SHEETS  (v2.1.0)
  * =============================================================================
- * Handles append-only syncing of records to Google Sheets
- * Supports per-business sheets with auto-formatting
- * Requires OAuth2 credentials setup in Google Cloud Console
- * @module services/googleSheets.service
- * @version 2.0.0
+ *
+ * Handles append-only syncing of PayMe records to Google Sheets.
+ * All auth config is read from #config/googleSheets.config.js — never
+ * from process.env directly.
+ *
+ * KEY DESIGN DECISIONS
+ * ─────────────────────
+ * • Auth is built once via buildAuth() and reused — no duplicate logic between
+ *   Sheets and Drive clients.
+ * • Every exported function checks SHEETS_ENABLED first and returns a typed
+ *   "disabled" result rather than throwing — callers are never surprised.
+ * • The || '' fallbacks on OAuth2 credentials have been removed.  If a var is
+ *   missing the Google SDK surfaces a clear error; validateGoogleSheetsConfig()
+ *   in server.js catches it before any request is served.
+ * • batchSyncRecords now returns the correct shape that the controller reads.
+ * • syncRecordToGoogleSheets and batchSyncRecords are non-blocking by design:
+ *   they catch internally and return { success: false } rather than throwing,
+ *   so a Sheets outage never breaks a sale.
+ *
+ * @module services/googleSheets
+ * =============================================================================
  */
 
 import logger from '#config/logger.js';
 import { google } from 'googleapis';
+import {
+  SHEETS_ENABLED,
+  USING_SERVICE_ACCOUNT,
+  SERVICE_ACCOUNT_KEY_PATH,
+  OAUTH2,
+  SCOPES,
+} from '#config/googleSheets.Config.js';
 
-const SCOPES = [
-  'https://www.googleapis.com/auth/drive',
-  'https://www.googleapis.com/auth/spreadsheets',
-];
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTH  (single shared builder)
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * GET AUTHENTICATED GOOGLE SHEETS CLIENT
- * Uses OAuth2 credentials from environment or service account
- * Required env vars:
- *   - GOOGLE_SHEETS_CLIENT_ID (leave blank for service account)
- *   - GOOGLE_SHEETS_CLIENT_SECRET (leave blank for service account)
- *   - GOOGLE_SHEETS_REFRESH_TOKEN (or will be generated via OAuth)
- *   - GOOGLE_SHEETS_ACCESS_TOKEN (cached access token)
- *   - GOOGLE_SHEETS_SERVICE_ACCOUNT_KEY (JSON path for service account - alternative)
+ * Build and return a GoogleAuth / OAuth2Client instance depending on the
+ * configured auth mode.  Both Sheets and Drive clients use this same auth
+ * object — no duplication.
  *
- * @returns {Promise<Object>} Authenticated Sheets API client
+ * @returns {google.auth.GoogleAuth | google.auth.OAuth2}
+ * @throws  {Error} if credentials are missing or malformed
+ *
+ * @internal
  */
-async function getAuthenticatedClient() {
-  try {
-    // Check if using service account (recommended for server-to-server)
-    if (process.env.GOOGLE_SHEETS_SERVICE_ACCOUNT_KEY) {
-      const keyFile = process.env.GOOGLE_SHEETS_SERVICE_ACCOUNT_KEY;
-      const auth = new google.auth.GoogleAuth({
-        keyFile,
-        scopes: SCOPES,
-      });
-      return google.sheets({ version: 'v4', auth });
-    }
-
-    // Use OAuth2 flow (for user-authorized access)
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_SHEETS_CLIENT_ID || '',
-      process.env.GOOGLE_SHEETS_CLIENT_SECRET || '',
-      process.env.GOOGLE_SHEETS_REDIRECT_URL ||
-        'http://localhost:3000/auth/google-callback'
-    );
-
-    // Set refresh token if available
-    if (process.env.GOOGLE_SHEETS_REFRESH_TOKEN) {
-      oauth2Client.setCredentials({
-        refresh_token: process.env.GOOGLE_SHEETS_REFRESH_TOKEN,
-      });
-    }
-
-    // If access token cached, use it
-    if (process.env.GOOGLE_SHEETS_ACCESS_TOKEN) {
-      oauth2Client.setCredentials({
-        access_token: process.env.GOOGLE_SHEETS_ACCESS_TOKEN,
-      });
-    }
-
-    return google.sheets({ version: 'v4', auth: oauth2Client });
-  } catch (error) {
-    logger.error('Failed to get authenticated Google Sheets client', {
-      error: error.message,
+function buildAuth() {
+  if (USING_SERVICE_ACCOUNT) {
+    return new google.auth.GoogleAuth({
+      keyFile: SERVICE_ACCOUNT_KEY_PATH,
+      scopes:  SCOPES,
     });
-    throw new Error('Google Sheets authentication failed - check credentials');
-  }
-}
-
-async function getDriveClient() {
-  if (process.env.GOOGLE_SHEETS_SERVICE_ACCOUNT_KEY) {
-    const auth = new google.auth.GoogleAuth({
-      keyFile: process.env.GOOGLE_SHEETS_SERVICE_ACCOUNT_KEY,
-      scopes: SCOPES,
-    });
-    return google.drive({ version: 'v3', auth });
   }
 
+  // OAuth2 path
   const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_SHEETS_CLIENT_ID || '',
-    process.env.GOOGLE_SHEETS_CLIENT_SECRET || '',
-    process.env.GOOGLE_SHEETS_REDIRECT_URL ||
-      'http://localhost:3000/auth/google-callback'
+    OAUTH2.clientId,      // validated non-null by validateGoogleSheetsConfig
+    OAUTH2.clientSecret,  // validated non-null by validateGoogleSheetsConfig
+    OAUTH2.redirectUrl
   );
 
-  if (process.env.GOOGLE_SHEETS_REFRESH_TOKEN) {
-    oauth2Client.setCredentials({
-      refresh_token: process.env.GOOGLE_SHEETS_REFRESH_TOKEN,
-    });
+  // Set whichever tokens are available.  If only refreshToken is set the SDK
+  // auto-refreshes the access token when it expires.
+  const credentials = {};
+  if (OAUTH2.refreshToken) credentials.refresh_token = OAUTH2.refreshToken;
+
+  if (Object.keys(credentials).length > 0) {
+    oauth2Client.setCredentials(credentials);
   }
 
-  if (process.env.GOOGLE_SHEETS_ACCESS_TOKEN) {
-    oauth2Client.setCredentials({
-      access_token: process.env.GOOGLE_SHEETS_ACCESS_TOKEN,
-    });
-  }
-
-  return google.drive({ version: 'v3', auth: oauth2Client });
+  return oauth2Client;
 }
 
 /**
- * GENERATE OAUTH2 AUTHORIZATION URL
- * Returns URL for user to authorize PayMe app
- * Call this when user clicks "Connect Google Sheets"
+ * Returns an authenticated Google Sheets API client.
  *
- * @returns {string} Authorization URL
+ * @returns {Promise<import('googleapis').sheets_v4.Sheets>}
+ * @internal
+ */
+async function getSheetsClient() {
+  try {
+    const auth = buildAuth();
+    return google.sheets({ version: 'v4', auth });
+  } catch (error) {
+    logger.error('Failed to build Google Sheets client', { error: error.message });
+    throw new Error('Google Sheets authentication failed — check credentials');
+  }
+}
+
+/**
+ * Returns an authenticated Google Drive API client.
+ *
+ * @returns {Promise<import('googleapis').drive_v3.Drive>}
+ * @internal
+ */
+async function getDriveClient() {
+  try {
+    const auth = buildAuth();
+    return google.drive({ version: 'v3', auth });
+  } catch (error) {
+    logger.error('Failed to build Google Drive client', { error: error.message });
+    throw new Error('Google Drive authentication failed — check credentials');
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OAUTH2 FLOW  (user-facing helpers)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Generate the Google OAuth2 authorisation URL.
+ * Direct the user here when they click "Connect Google Sheets".
+ *
+ * @returns {string} URL to redirect the user to
+ * @throws  {Error}  if GOOGLE_SHEETS_ENABLED is false
  */
 export function getGoogleAuthUrl() {
+  if (!SHEETS_ENABLED) {
+    throw new Error('Google Sheets integration is not enabled (GOOGLE_SHEETS_ENABLED != true)');
+  }
+
   const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_SHEETS_CLIENT_ID || '',
-    process.env.GOOGLE_SHEETS_CLIENT_SECRET || '',
-    process.env.GOOGLE_SHEETS_REDIRECT_URL ||
-      'http://localhost:3000/auth/google-callback'
+    OAUTH2.clientId,
+    OAUTH2.clientSecret,
+    OAUTH2.redirectUrl
   );
 
   return oauth2Client.generateAuthUrl({
     access_type: 'offline',
-    scope: SCOPES,
+    prompt:      'consent', // force refresh_token to be issued every time
+    scope:       SCOPES,
   });
 }
 
 /**
- * EXCHANGE OAUTH2 AUTH CODE FOR TOKENS
- * Call this from /auth/google-callback endpoint
- * Save refresh_token to env for future use
+ * Exchange a one-time OAuth2 authorisation code for tokens.
+ * Call from the /api/google-sheets/callback endpoint.
+ * Save the returned refresh_token to .env as GOOGLE_SHEETS_REFRESH_TOKEN.
  *
- * @param {string} code - Authorization code from OAuth redirect
- * @returns {Promise<Object>} Tokens including refresh_token
+ * @param {string} code - Code from the OAuth2 redirect query string
+ * @returns {Promise<Object>} tokens  { access_token, refresh_token, expiry_date, … }
  */
 export async function exchangeAuthCode(code) {
-  try {
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_SHEETS_CLIENT_ID || '',
-      process.env.GOOGLE_SHEETS_CLIENT_SECRET || '',
-      process.env.GOOGLE_SHEETS_REDIRECT_URL ||
-        'http://localhost:3000/auth/google-callback'
-    );
+  const oauth2Client = new google.auth.OAuth2(
+    OAUTH2.clientId,
+    OAUTH2.clientSecret,
+    OAUTH2.redirectUrl
+  );
 
+  try {
     const { tokens } = await oauth2Client.getToken(code);
     logger.info('OAuth2 tokens exchanged successfully', {
       hasRefreshToken: !!tokens.refresh_token,
     });
-
     return tokens;
   } catch (error) {
-    logger.error('Failed to exchange OAuth2 code', {
-      error: error.message,
-    });
+    logger.error('Failed to exchange OAuth2 code', { error: error.message });
     throw error;
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SHEET MANAGEMENT
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Column headers written to row 1 of every new sheet. */
+const SHEET_HEADERS = [
+  'Date', 'Time', 'Type', 'Category', 'Description',
+  'Items', 'Quantity', 'Amount (KES)', 'Payment Method',
+  'M-Pesa Code', 'Sender Name', 'Sender Phone', 'Notes', 'Created At',
+];
+
+const HEADER_RANGE  = 'Records!A1:N1';
+const DATA_RANGE    = 'Records!A:N';
+const READ_RANGE    = 'Records!A2:N'; // skip header row on reads
+
 /**
- * GET OR CREATE BUSINESS SHEET
- * Creates a new Google Sheet for business if it doesn't exist
- * Names sheet: "PayMe_{BusinessName}_{BusinessID}"
- * Auto-creates headers and formatting
+ * Find or create the Google Sheet for a business.
+ * Sheet is named "PayMe_{BusinessName}_{BusinessID}" for easy identification.
  *
- * @param {number} businessId - Business ID
- * @param {string} businessName - Business name
- * @returns {Promise<string>} Spreadsheet ID
+ * @param {number} businessId
+ * @param {string} businessName
+ * @returns {Promise<{ spreadsheetId: string, sheetId: number, sheetName: string, webViewLink: string }>}
  */
 export async function getOrCreateBusinessSheet(businessId, businessName) {
-  try {
-    const sheets = await getAuthenticatedClient();
-    const drive = await getDriveClient();
-
-    const sheetName = `PayMe_${businessName}_${businessId}`;
-
-    // Search for existing sheet
-    const searchResults = await drive.files.list({
-      q: `name='${sheetName}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`,
-      spaces: 'drive',
-      fields: 'files(id, name)',
-      pageSize: 1,
-    });
-
-    if (searchResults.data.files && searchResults.data.files.length > 0) {
-      logger.info('Found existing Google Sheet', {
-        businessId,
-        sheetId: searchResults.data.files[0].id,
-      });
-      const existingId = searchResults.data.files[0].id;
-      return {
-        sheetId: 0,
-        spreadsheetId: existingId,
-        sheetName,
-        webViewLink: `https://docs.google.com/spreadsheets/d/${existingId}/edit`,
-      };
-    }
-
-    // Create new sheet if not found
-    const createResponse = await sheets.spreadsheets.create({
-      requestBody: {
-        properties: {
-          title: sheetName,
-          locale: 'en_US',
-          autoRecalc: 'ON_CHANGE',
-        },
-        sheets: [
-          {
-            properties: {
-              sheetId: 0,
-              title: 'Records',
-              index: 0,
-            },
-          },
-        ],
-      },
-    });
-
-    const spreadsheetId = createResponse.data.spreadsheetId;
-
-    // Add headers
-    const headers = [
-      'Date',
-      'Time',
-      'Type',
-      'Category',
-      'Description',
-      'Items',
-      'Quantity',
-      'Amount (KES)',
-      'Payment Method',
-      'M-Pesa Code',
-      'Sender Name',
-      'Sender Phone',
-      'Notes',
-      'Created At',
-    ];
-
-    await sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range: 'Records!A1:N1',
-      valueInputOption: 'RAW',
-      requestBody: {
-        values: [headers],
-      },
-    });
-
-    // Format headers (bold, background color)
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId,
-      requestBody: {
-        requests: [
-          {
-            repeatCell: {
-              range: {
-                sheetId: 0,
-                startRowIndex: 0,
-                endRowIndex: 1,
-              },
-              cell: {
-                userEnteredFormat: {
-                  backgroundColor: { red: 0.2, green: 0.2, blue: 0.8 },
-                  textFormat: {
-                    bold: true,
-                    foregroundColor: { red: 1, green: 1, blue: 1 },
-                  },
-                  horizontalAlignment: 'CENTER',
-                },
-              },
-              fields:
-                'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
-            },
-          },
-        ],
-      },
-    });
-
-    logger.info('Google Sheet created successfully', {
-      businessId,
-      spreadsheetId,
-      sheetName,
-    });
-
-    return {
-      sheetId: 0,
-      spreadsheetId,
-      sheetName,
-      webViewLink: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
-    };
-  } catch (error) {
-    logger.error('Failed to get/create business sheet', {
-      error: error.message,
-      businessId,
-      businessName,
-    });
-    throw error;
+  if (!SHEETS_ENABLED) {
+    throw new Error('Google Sheets integration is disabled');
   }
+
+  const sheets    = await getSheetsClient();
+  const drive     = await getDriveClient();
+  const sheetName = `PayMe_${businessName}_${businessId}`;
+
+  // ── Search for existing sheet ─────────────────────────────────────────────
+  const searchResult = await drive.files.list({
+    q: `name='${sheetName}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`,
+    spaces: 'drive',
+    fields: 'files(id, name)',
+    pageSize: 1,
+  });
+
+  if (searchResult.data.files?.length > 0) {
+    const existingId = searchResult.data.files[0].id;
+    logger.info('Found existing Google Sheet', { businessId, spreadsheetId: existingId });
+    return {
+      spreadsheetId: existingId,
+      sheetId:       0,
+      sheetName,
+      webViewLink:   `https://docs.google.com/spreadsheets/d/${existingId}/edit`,
+    };
+  }
+
+  // ── Create new sheet ──────────────────────────────────────────────────────
+  const createResponse = await sheets.spreadsheets.create({
+    requestBody: {
+      properties: { title: sheetName, locale: 'en_US', autoRecalc: 'ON_CHANGE' },
+      sheets: [{ properties: { sheetId: 0, title: 'Records', index: 0 } }],
+    },
+  });
+
+  const spreadsheetId = createResponse.data.spreadsheetId;
+
+  // Write headers
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range:            HEADER_RANGE,
+    valueInputOption: 'RAW',
+    requestBody:      { values: [SHEET_HEADERS] },
+  });
+
+  // Bold + blue header formatting
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [{
+        repeatCell: {
+          range: { sheetId: 0, startRowIndex: 0, endRowIndex: 1 },
+          cell: {
+            userEnteredFormat: {
+              backgroundColor:    { red: 0.2, green: 0.2, blue: 0.8 },
+              textFormat:         { bold: true, foregroundColor: { red: 1, green: 1, blue: 1 } },
+              horizontalAlignment: 'CENTER',
+            },
+          },
+          fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
+        },
+      }],
+    },
+  });
+
+  logger.info('Google Sheet created', { businessId, spreadsheetId, sheetName });
+
+  return {
+    spreadsheetId,
+    sheetId:     0,
+    sheetName,
+    webViewLink: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
+  };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ROW FORMATTING HELPER
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * SYNC RECORD TO GOOGLE SHEETS
- * Appends new record as row to Google Sheet (append-only, no overwrites)
- * Maintains data integrity for audit trail
- * Non-blocking: Failures don't prevent record creation
+ * Convert a record object to a Sheets row array matching SHEET_HEADERS order.
  *
- * @param {number} businessId - Business ID
- * @param {string} spreadsheetId - Google Sheets ID
- * @param {Object} record - Record to sync (with items array)
- * @returns {Promise<Object>} Sync result with row ID
+ * @param {Object} record
+ * @returns {Array<string>}
+ * @internal
  */
-export async function syncRecordToGoogleSheets(
-  businessId,
-  spreadsheetId,
-  record
-) {
+function recordToRow(record) {
+  const txDate = new Date(record.transaction_date);
+  return [
+    txDate.toLocaleDateString('en-KE'),
+    txDate.toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' }),
+    record.type                                         ?? '',
+    record.category                                     ?? '',
+    record.description                                  ?? '',
+    record.items?.map(i => i.item_name).join(', ')      ?? '',
+    String(record.quantity ?? 1),
+    String(record.amount),
+    record.payment_method                               ?? 'N/A',
+    record.mpesa_receipt_number                         ?? 'N/A',
+    record.mpesa_sender_name                            ?? 'N/A',
+    record.mpesa_sender_phone                           ?? 'N/A',
+    record.notes                                        ?? '',
+    new Date(record.created_at).toLocaleString('en-KE'),
+  ];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SYNC OPERATIONS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Append a single record to a Google Sheet.
+ *
+ * Non-blocking: catches internally and returns { success: false, error } rather
+ * than throwing — a Sheets outage must never block a sale from being recorded.
+ *
+ * @param {number} businessId
+ * @param {string} spreadsheetId
+ * @param {Object} record
+ * @returns {Promise<{ success: boolean, spreadsheetId?: string, sheets_row_id?: string, skipped?: boolean, error?: string }>}
+ */
+export async function syncRecordToGoogleSheets(businessId, spreadsheetId, record) {
+  if (!SHEETS_ENABLED) {
+    logger.debug('Google Sheets sync skipped (disabled)');
+    return { success: true, skipped: true };
+  }
+
+  if (!record?.id || !spreadsheetId) {
+    logger.warn('syncRecordToGoogleSheets: missing record id or spreadsheetId', {
+      businessId,
+      recordId:      record?.id,
+      spreadsheetId,
+    });
+    return { success: false, error: 'Invalid record or spreadsheet ID' };
+  }
+
   try {
-    if (!process.env.GOOGLE_SHEETS_ENABLED) {
-      logger.debug('Google Sheets sync disabled, skipping');
-      return { success: true, skipped: true };
-    }
+    const sheets = await getSheetsClient();
 
-    // Validate record
-    if (!record || !record.id || !spreadsheetId) {
-      throw new Error('Invalid record or spreadsheet ID for sync');
-    }
-
-    const sheets = await getAuthenticatedClient();
-
-    // Format row data
-    const rowData = [
-      [
-        new Date(record.transaction_date).toLocaleDateString('en-KE'),
-        new Date(record.transaction_date).toLocaleTimeString('en-KE', {
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
-        record.type,
-        record.category,
-        record.description || '',
-        record.items?.map(i => i.item_name).join(', ') || '',
-        record.quantity || 1,
-        record.amount.toString(),
-        record.payment_method || 'N/A',
-        record.mpesa_receipt_number || 'N/A',
-        record.mpesa_sender_name || 'N/A',
-        record.mpesa_sender_phone || 'N/A',
-        record.notes || '',
-        new Date(record.created_at).toLocaleString('en-KE'),
-      ],
-    ];
-
-    // Append to sheet
     const appendResponse = await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: 'Records!A:N',
+      range:            DATA_RANGE,
       valueInputOption: 'RAW',
       insertDataOption: 'INSERT_ROWS',
-      requestBody: {
-        values: rowData,
-      },
+      requestBody:      { values: [recordToRow(record)] },
     });
 
     logger.info('Record synced to Google Sheets', {
       businessId,
-      recordId: record.id,
+      recordId:      record.id,
       spreadsheetId,
-      appendedRows: appendResponse.data.updates.updatedRows,
+      updatedRows:   appendResponse.data.updates?.updatedRows,
     });
 
     return {
-      success: true,
+      success:       true,
       spreadsheetId,
-      sheets_row_id: appendResponse.data.updates.updatedRange,
+      sheets_row_id: appendResponse.data.updates?.updatedRange ?? null,
     };
   } catch (error) {
     logger.error('Google Sheets sync failed (non-critical)', {
-      error: error.message,
+      error:         error.message,
       businessId,
-      recordId: record?.id,
+      recordId:      record?.id,
+      spreadsheetId,
     });
-    // Non-blocking: Return sync error but don't throw
-    return {
-      success: false,
-      error: error.message,
-      recordId: record?.id,
-    };
+    return { success: false, error: error.message, recordId: record?.id };
   }
 }
 
 /**
- * BATCH SYNC RECORDS
- * Syncs multiple records at once (for backfill or recovery)
- * Non-blocking: Failures don't prevent main operation
+ * Append multiple records to a Google Sheet in a single API call.
  *
- * @param {number} businessId - Business ID
- * @param {string} spreadsheetId - Google Sheets ID
- * @param {Array} records - Array of records to sync
- * @returns {Promise<Object>} Batch sync result
+ * Non-blocking: same contract as syncRecordToGoogleSheets.
+ *
+ * @param {number} businessId
+ * @param {string} spreadsheetId
+ * @param {Object[]} records
+ * @returns {Promise<{ success: boolean, synced: number, failed: number, spreadsheetId?: string, updatedRange?: string, error?: string }>}
  */
 export async function batchSyncRecords(businessId, spreadsheetId, records) {
+  if (!SHEETS_ENABLED) {
+    logger.debug('Google Sheets batch sync skipped (disabled)');
+    return { success: true, skipped: true, synced: 0, failed: 0 };
+  }
+
+  if (!records?.length) {
+    return { success: true, synced: 0, failed: 0 };
+  }
+
   try {
-    if (!records || records.length === 0) {
-      return { success: true, synced: 0, failed: 0 };
-    }
+    const sheets = await getSheetsClient();
+    const rows   = records.map(recordToRow);
 
-    const sheets = await getAuthenticatedClient();
-
-    // Prepare all rows
-    const rowsData = records.map(record => [
-      new Date(record.transaction_date).toLocaleDateString('en-KE'),
-      new Date(record.transaction_date).toLocaleTimeString('en-KE', {
-        hour: '2-digit',
-        minute: '2-digit',
-      }),
-      record.type,
-      record.category,
-      record.description || '',
-      record.items?.map(i => i.item_name).join(', ') || '',
-      record.quantity || 1,
-      record.amount.toString(),
-      record.payment_method || 'N/A',
-      record.mpesa_receipt_number || 'N/A',
-      record.mpesa_sender_name || 'N/A',
-      record.mpesa_sender_phone || 'N/A',
-      record.notes || '',
-      new Date(record.created_at).toLocaleString('en-KE'),
-    ]);
-
-    // Append all rows
     const appendResponse = await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: 'Records!A:N',
+      range:            DATA_RANGE,
       valueInputOption: 'RAW',
       insertDataOption: 'INSERT_ROWS',
-      requestBody: {
-        values: rowsData,
-      },
+      requestBody:      { values: rows },
     });
 
-    const synced = appendResponse.data.updates.updatedRows || rowsData.length;
-    const failed = 0;
+    const synced = appendResponse.data.updates?.updatedRows ?? rows.length;
 
-    logger.info('Batch sync completed', {
+    logger.info('Batch sync to Google Sheets complete', {
       businessId,
       spreadsheetId,
       synced,
-      failed,
       total: records.length,
     });
 
-    return { success: true, synced, failed };
+    return {
+      success:       true,
+      synced,
+      failed:        0,
+      spreadsheetId,
+      // controller reads updatedRange to show the user which rows were appended
+      updatedRange:  appendResponse.data.updates?.updatedRange ?? null,
+    };
   } catch (error) {
-    logger.error('Batch sync failed', {
-      error: error.message,
+    logger.error('Google Sheets batch sync failed (non-critical)', {
+      error:       error.message,
       businessId,
       recordCount: records?.length,
     });
-    // Non-blocking: Return error details without throwing
     return {
       success: false,
-      synced: 0,
-      failed: records?.length || 0,
-      error: error.message,
+      synced:  0,
+      failed:  records?.length ?? 0,
+      error:   error.message,
     };
   }
 }
 
 /**
- * FETCH RECORDS FROM GOOGLE SHEETS
- * Reads records from Google Sheet (for verification/audit)
- * Filters by date range if provided
+ * Read records back from a Google Sheet (for audit / verification).
+ * Returns an empty array on any error — never throws.
  *
- * @param {number} businessId - Business ID
- * @param {string} spreadsheetId - Google Sheets ID
- * @param {Object} dateRange - { start_date, end_date } (optional)
- * @returns {Promise<Array>} Records from Google Sheets
+ * @param {number} businessId
+ * @param {string} spreadsheetId
+ * @param {{ start_date?: string, end_date?: string }} [dateRange]
+ * @returns {Promise<Object[]>}
  */
-export async function fetchRecordsFromGoogleSheets(
-  businessId,
-  spreadsheetId,
-  dateRange = {}
-) {
-  try {
-    const sheets = await getAuthenticatedClient();
+export async function fetchRecordsFromGoogleSheets(businessId, spreadsheetId, dateRange = {}) {
+  if (!SHEETS_ENABLED) {
+    return [];
+  }
 
-    // Fetch all data from Records sheet
+  try {
+    const sheets   = await getSheetsClient();
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: 'Records!A2:N', // Skip headers (row 1)
+      range: READ_RANGE,
     });
 
-    if (!response.data.values || response.data.values.length === 0) {
-      logger.info('No records found in Google Sheets', {
-        businessId,
-        spreadsheetId,
-      });
+    const rows = response.data.values;
+    if (!rows?.length) {
       return [];
     }
 
-    // Convert rows to objects using headers
-    const headers = [
-      'date',
-      'time',
-      'type',
-      'category',
-      'description',
-      'items',
-      'quantity',
-      'amount',
-      'payment_method',
-      'mpesa_code',
-      'sender_name',
-      'sender_phone',
-      'notes',
-      'created_at',
+    // Map positional columns back to the header names
+    const headerKeys = [
+      'date', 'time', 'type', 'category', 'description',
+      'items', 'quantity', 'amount', 'payment_method',
+      'mpesa_code', 'sender_name', 'sender_phone', 'notes', 'created_at',
     ];
 
-    const records = response.data.values.map(row => {
+    let records = rows.map(row => {
       const record = {};
-      headers.forEach((header, idx) => {
-        record[header] = row[idx] || '';
-      });
+      headerKeys.forEach((key, i) => { record[key] = row[i] ?? ''; });
       return record;
     });
 
-    // Filter by date range if provided
-    if (dateRange.start_date || dateRange.end_date) {
-      const startDate = dateRange.start_date
-        ? new Date(dateRange.start_date)
-        : new Date('2000-01-01');
-      const endDate = dateRange.end_date
-        ? new Date(dateRange.end_date)
-        : new Date();
+    // Optional date-range filter
+    const startDate = dateRange.start_date ? new Date(dateRange.start_date) : null;
+    const endDate   = dateRange.end_date   ? new Date(dateRange.end_date)   : null;
 
-      return records.filter(record => {
-        const recordDate = new Date(record.date);
-        return recordDate >= startDate && recordDate <= endDate;
+    if (startDate || endDate) {
+      records = records.filter(record => {
+        const d = new Date(record.date);
+        if (startDate && d < startDate) return false;
+        if (endDate   && d > endDate)   return false;
+        return true;
       });
     }
 
@@ -549,13 +487,11 @@ export async function fetchRecordsFromGoogleSheets(
       businessId,
       spreadsheetId,
     });
-    // Non-blocking: Return empty array instead of throwing
     return [];
   }
 }
 
 export default {
-  getAuthenticatedClient,
   getGoogleAuthUrl,
   exchangeAuthCode,
   getOrCreateBusinessSheet,
