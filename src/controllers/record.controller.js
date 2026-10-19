@@ -10,6 +10,12 @@ import logger from '#config/logger.js';
 // Token deduction is handled inside `createRecord` transaction — no manual calls
 import * as recordService from '#services/record.service.js';
 import * as statementService from '#services/statementService.js';
+import { getStatementFinancials } from '#services/sales.service.js';
+import {
+  startOfBusinessDay,
+  endOfBusinessDay,
+  businessDayKey,
+} from '#utils/businessDay.js';
 import {
   createRecordSchema,
   queryRecordsSchema,
@@ -28,7 +34,6 @@ export async function createRecord(req, res, next) {
     const { business_id } = req.params;
     const { id: user_id } = req.user;
 
-    // Validate request
     const validationResult = createRecordSchema.safeParse({
       business_id: parseInt(business_id),
       ...req.body,
@@ -47,10 +52,7 @@ export async function createRecord(req, res, next) {
       user_id,
     };
 
-    // Create record (with token deduction & Google Sheets sync)
     const record = await recordService.createRecord(recordData);
-
-    // Token deduction occurs inside `recordService.createRecord`
 
     logger.info('Record created via API', {
       record_id: record.id,
@@ -73,8 +75,6 @@ export async function createRecord(req, res, next) {
       business_id: req.params.business_id,
       request_id: requestId,
     });
-
-    // No manual refund necessary — `createRecord` handles atomic deduction
 
     if (
       error.message ===
@@ -102,12 +102,16 @@ export async function createRecord(req, res, next) {
 /**
  * GET RECORDS: List all records for business with filters
  * GET /api/records/:business_id
+ *
+ * This is also what the Statement page's on-screen preview table calls
+ * (filtered to start_date/end_date) — the same zebra-striped table used
+ * throughout Records, just scoped to the statement's date range. No
+ * separate "statement preview" endpoint needed.
  */
 export async function getRecords(req, res, next) {
   try {
     const { business_id } = req.params;
 
-    // Validate query parameters
     const validationResult = queryRecordsSchema.safeParse(req.query);
 
     if (!validationResult.success) {
@@ -119,7 +123,6 @@ export async function getRecords(req, res, next) {
 
     const filters = validationResult.data;
 
-    // Fetch records
     const records = await recordService.getRecords(
       parseInt(business_id),
       filters
@@ -184,8 +187,8 @@ export async function getTotals(req, res, next) {
 
     const totals = await recordService.calculateTotals(
       parseInt(business_id),
-      start_date ? new Date(start_date) : undefined,
-      end_date ? new Date(end_date) : undefined
+      start_date ? startOfBusinessDay(start_date) : undefined,
+      end_date ? endOfBusinessDay(end_date) : undefined
     );
 
     return res.status(200).json({
@@ -209,7 +212,6 @@ export async function getDashboardInsights(req, res, next) {
   try {
     const { business_id } = req.params;
 
-    // Validate query
     const validationResult = dashboardInsightsSchema.safeParse(req.query);
 
     if (!validationResult.success) {
@@ -240,15 +242,97 @@ export async function getDashboardInsights(req, res, next) {
   }
 }
 
+export async function getStatementFinancialsPreview(req, res, next) {
+  try {
+    const { business_id } = req.params;
+    const { start_date, end_date } = req.query;
+
+    // Nairobi day bounds, not UTC midnight — see utils/businessDay.js. Using
+    // new Date('YYYY-MM-DD') here cut the range at 03:00 local on the final
+    // day, so the preview silently dropped the last trading day.
+    const financials = await getStatementFinancials(
+      parseInt(business_id, 10),
+      startOfBusinessDay(start_date) ?? startOfBusinessDay(businessDayKey()),
+      endOfBusinessDay(end_date) ?? endOfBusinessDay(businessDayKey())
+    );
+
+    return res.status(200).json({
+      success: true,
+      financials,
+    });
+  } catch (error) {
+    logger.error('Statement financials preview failed', {
+      error: error.message,
+      business_id: req.params.business_id,
+    });
+    next(error);
+  }
+}
+
 /**
- * GENERATE STATEMENT: Create bank-grade PDF statement
+ * Map a service-layer error (with .code / .statusCode set by
+ * statementService) to an HTTP response. Falls back to next(error) for
+ * anything unrecognized, so the global error handler still catches
+ * genuinely unexpected failures.
+ *
+ * @returns {boolean} true if a response was sent
+ */
+function respondToStatementError(error, res, businessId) {
+  const knownCodes = [
+    'STATEMENT_VALIDATION_ERROR',
+    'BUSINESS_NOT_FOUND',
+    'NO_RECORDS_FOUND',
+    'RECORD_ITEMS_FETCH_FAILED',
+    'FINGERPRINT_GENERATION_FAILED',
+    'QR_CODE_GENERATION_FAILED',
+    'TEMPLATE_READ_FAILED',
+    'TEMPLATE_COMPILE_FAILED',
+    'TEMPLATE_RENDER_FAILED',
+    'PDF_ENGINE_START_FAILED',
+    'PDF_RENDER_FAILED',
+    'STATEMENT_AUDIT_LOG_FAILED',
+    'STATEMENT_GENERATION_FAILED',
+  ];
+
+  if (!error.code || !knownCodes.includes(error.code)) {
+    return false;
+  }
+
+  logger.error('Statement request failed', {
+    code: error.code,
+    error: error.message,
+    business_id: businessId,
+  });
+
+  res.status(error.statusCode || 500).json({
+    error: error.code,
+    message: error.message,
+    business_id: businessId,
+  });
+
+  return true;
+}
+
+/**
+ * GENERATE STATEMENT: Create a bank-grade PDF statement.
+ *
+ * Body params:
+ * - start_date (required)
+ * - end_date (optional, defaults to today)
+ * - statement_type: 'summary' | 'full' (default 'full')
+ *     'summary' → financial position only, no per-transaction ledger.
+ *     'full'    → summary + the complete, unbounded transaction ledger.
+ *
+ * This endpoint only ever returns a PDF. Screen-side previews use the
+ * existing GET /api/records/:business_id list endpoint instead — one job
+ * per endpoint, no duplicated data-fetching paths to keep in sync.
+ *
  * POST /api/records/:business_id/generate-statement
  */
 export async function generateStatement(req, res, next) {
-  try {
-    const { business_id } = req.params;
+  const { business_id } = req.params;
 
-    // Validate request
+  try {
     const validationResult = generateStatementSchema.safeParse({
       business_id: parseInt(business_id),
       ...req.body,
@@ -261,99 +345,34 @@ export async function generateStatement(req, res, next) {
       });
     }
 
-    const { start_date, end_date, format } = validationResult.data;
+    const { start_date, end_date, statement_type } = validationResult.data;
+    const userId = req.user?.id || null;
 
-    if (format === 'pdf') {
-      // Generate PDF
-      const { pdfBuffer, vCode } =
-        await statementService.generateBusinessStatement(
-          parseInt(business_id),
-          start_date,
-          end_date
-        );
-
-      // Set response headers for PDF download
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader(
-        'Content-Disposition',
-        `attachment; filename="statement_${business_id}_${vCode}.pdf"`
-      );
-
-      return res.send(pdfBuffer);
-    }
-
-    // CSV or JSON format
-    const records = await recordService.getRecordsByDateRange(
+    const { pdfBuffer, vCode } = await statementService.generateBusinessStatement(
       parseInt(business_id),
       start_date,
-      end_date
+      end_date,
+      userId,
+      statement_type
     );
 
-    const totals = await recordService.calculateTotals(
-      parseInt(business_id),
-      start_date,
-      end_date
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="statement_${business_id}_${statement_type}_${vCode}.pdf"`
     );
-
-    if (format === 'csv') {
-      // Convert to CSV
-      const csv = recordsToCSV(records, totals);
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader(
-        'Content-Disposition',
-        `attachment; filename="statement_${business_id}.csv"`
-      );
-      return res.send(csv);
-    }
-
-    // JSON format (default)
-    return res.status(200).json({
-      success: true,
-      business_id,
-      period: {
-        start_date,
-        end_date: end_date || new Date(),
-      },
-      records,
-      totals,
-    });
+    return res.send(pdfBuffer);
   } catch (error) {
-    logger.error('Generate statement endpoint failed', {
+    if (respondToStatementError(error, res, business_id)) {
+      return;
+    }
+
+    logger.error('Generate statement endpoint failed unexpectedly', {
       error: error.message,
-      business_id: req.params.business_id,
+      business_id,
     });
     next(error);
   }
-}
-
-/**
- * HELPER: Convert records to CSV format
- */
-function recordsToCSV(records, totals) {
-  let csv = 'Date,Type,Category,Description,Amount,Payment Method,Notes\n';
-
-  records.forEach(record => {
-    csv += `"${record.transaction_date.toISOString().split('T')[0]}",`;
-    csv += `"${record.type}",`;
-    csv += `"${record.category}",`;
-    csv += `"${record.description || ''}",`;
-    csv += `${record.amount},`;
-    csv += `"${record.payment_method || ''}",`;
-    csv += `"${record.notes || ''}"\n`;
-  });
-
-  // Add totals
-  csv += '\n,FINANCIAL SUMMARY,,,\n';
-  csv += `Total Sales,,${totals.total_sales}\n`;
-  csv += `Cash Sales,,${totals.cash_sales}\n`;
-  csv += `M-Pesa Sales,,${totals.mpesa_sales}\n`;
-  csv += `Higher Purchase,,${totals.higher_purchase}\n`;
-  csv += `Credit Given,,${totals.credit_given}\n`;
-  csv += `Credit Recovered,,${totals.credit_recovered}\n`;
-  csv += `Expenses,,${totals.expenses}\n`;
-  csv += `NET PROFIT,,${totals.net_profit}\n`;
-
-  return csv;
 }
 
 export default {
@@ -362,5 +381,6 @@ export default {
   getRecordById,
   getTotals,
   getDashboardInsights,
+  getStatementFinancialsPreview,
   generateStatement,
 };

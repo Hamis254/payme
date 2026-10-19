@@ -12,14 +12,25 @@ import {
   updatePaymentMethod,
   togglePaymentConfig,
   verifyPaymentConfigHandler,
+  getPaymentConfigHandler,
 } from '#controllers/paymentConfig.controller.js';
-
-import { getPaymentConfigHandler } from '#controllers/paymentConfig.controller.js';
 
 const router = express.Router();
 
 // All routes require authentication
 router.use(authenticateToken);
+
+/**
+ * GET /api/payment-config/fields?method=paybill|till
+ * Returns required fields for the specified payment method to guide
+ * frontend form rendering.
+ *
+ * IMPORTANT: this must be registered BEFORE 'GET /:businessId' below —
+ * Express matches routes in registration order, and ':businessId' is a
+ * wildcard that would otherwise swallow this request first (treating the
+ * literal string "fields" as a businessId).
+ */
+router.get('/fields', getPaymentConfigHandler);
 
 /**
  * POST /api/payment-config/setup
@@ -62,9 +73,5 @@ router.post('/:configId/toggle', togglePaymentConfig);
  * Tests credentials without creating actual transaction
  */
 router.post('/:configId/verify', verifyPaymentConfigHandler);
-
-// GET /api/payment-config/fields? method=paybill|till
-// Returns required fields for the specified payment method to guide frontend form rendering
-router.get('/fields', getPaymentConfigHandler);
 
 export default router;

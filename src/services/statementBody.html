@@ -1,11 +1,11 @@
 <!-- ══════════════════════════════════════════ -->
-<!-- SECTION 1: REVENUE SUMMARY                -->
+<!-- REVENUE COLLECTED (numbered at render time - see `s` in statementService) -->
 <!-- ══════════════════════════════════════════ -->
 <div class="no-break">
-  <div class="section-title green">1. REVENUE SUMMARY (MONEY IN)</div>
+  <div class="section-title green">{{s_revenue}}. REVENUE COLLECTED (MONEY IN)</div>
   <table>
     <tr>
-      <th style="width: 60%">REVENUE SOURCE</th>
+      <th style="width: 60%">SOURCE</th>
       <th style="width: 20%" class="right">TRANSACTIONS</th>
       <th style="width: 20%" class="right">AMOUNT (KSH)</th>
     </tr>
@@ -20,62 +20,139 @@
       <td class="right">{{mpesa_total}}</td>
     </tr>
     <tr>
-      <td>Credit Sales (goods given, payment pending)</td>
-      <td class="right">{{credit_count}}</td>
-      <td class="right">{{credit_lent}}</td>
+      <td>Credit Repayments Received</td>
+      <td class="right">—</td>
+      <td class="right">{{credit_repaid}}</td>
     </tr>
     <tr>
-      <td>Hire Purchase Agreements</td>
-      <td class="right">{{hp_count}}</td>
-      <td class="right">{{hp_total}}</td>
+      <td>Hire Purchase Deposits Received</td>
+      <td class="right">—</td>
+      <td class="right">{{hp_deposits}}</td>
+    </tr>
+    <tr>
+      <td>Hire Purchase Installments Received</td>
+      <td class="right">—</td>
+      <td class="right">{{hp_installments}}</td>
     </tr>
     <tr class="total-green">
-      <td>GROSS REVENUE</td>
-      <td class="right">{{total_transactions}}</td>
-      <td class="right">{{gross_revenue}}</td>
+      <td>REVENUE COLLECTED</td>
+      <td class="right">—</td>
+      <td class="right">{{revenue_collected}}</td>
     </tr>
   </table>
+  <div style="font-size: 8pt; color: #666; margin-top: 4px">
+    Money actually received in this period. Credit and hire purchase sales are
+    recorded as revenue only as the customer pays — goods handed over on credit
+    appear in Section {{s_given}}, not here.
+  </div>
 </div>
 
 <!-- ══════════════════════════════════════════ -->
-<!-- SECTION 2: COST OF GOODS & GROSS PROFIT  -->
+<!-- CREDIT & HP GIVEN - debts opened this period          -->
+<!-- Goods left the shop but no money arrived. Deliberately kept out of      -->
+<!-- Revenue Collected so the two are never conflated.                       -->
 <!-- ══════════════════════════════════════════ -->
 <div class="no-break">
-  <div class="section-title dark">2. COST OF GOODS SOLD &amp; GROSS PROFIT</div>
+  <div class="section-title dark">
+    {{s_given}}. CREDIT &amp; HIRE PURCHASE GIVEN (GOODS OUT, PAYMENT PENDING)
+  </div>
+  <table>
+    <tr>
+      <th style="width: 60%">TYPE</th>
+      <th style="width: 20%" class="right">AGREEMENTS</th>
+      <th style="width: 20%" class="right">VALUE (KSH)</th>
+    </tr>
+    <tr>
+      <td>Credit Given</td>
+      <td class="right">{{credit_count}}</td>
+      <td class="right">{{credit_given}}</td>
+    </tr>
+    <tr>
+      <td>Hire Purchase Given</td>
+      <td class="right">{{hp_count}}</td>
+      <td class="right">{{hp_given}}</td>
+    </tr>
+  </table>
+  <div style="font-size: 8pt; color: #666; margin-top: 4px">
+    These are debts opened, not income. They are not included in Revenue
+    Collected or Net Profit. What has since been repaid appears in Section {{s_receivables}}.
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════ -->
+<!-- BUSINESS TREND                            -->
+<!-- Only shown when the period spans more than one calendar month —      -->
+<!-- a single-month statement has nothing to trend against.               -->
+<!-- ══════════════════════════════════════════ -->
+{{#if show_trend}}
+<div class="no-break">
+  <div class="section-title dark">{{s_trend}}. BUSINESS TREND (GOODS FLOW BY MONTH)</div>
+  <table>
+    <tr>
+      <th style="width: 28%">MONTH</th>
+      <th style="width: 18%" class="right">COLLECTED (KSH)</th>
+      <th style="width: 18%" class="right">EXPENSES (KSH)</th>
+      <th style="width: 18%" class="right">CREDIT/HP GIVEN</th>
+      <th style="width: 18%" class="right">NET CASH (KSH)</th>
+    </tr>
+    {{#each monthly_trend}}
+    <tr>
+      <td>{{this.month}}</td>
+      <td class="right">{{this.collected}}</td>
+      <td class="right" style="color: #b71c1c">{{this.expenses}}</td>
+      <td class="right" style="color: #666">{{this.debts}}</td>
+      <td class="right" style="font-weight: 700">{{this.net}}</td>
+    </tr>
+    {{/each}}
+  </table>
+  <div style="font-size: 8pt; color: #666; margin-top: 4px">
+    Net Cash is Collected less Expenses. Credit and hire purchase given are
+    shown for context only — opening a debt moves goods, not money, so it is
+    excluded from Net Cash.
+  </div>
+</div>
+{{/if}}
+
+<!-- ══════════════════════════════════════════ -->
+<!-- BUSINESS VOLUME (accrual reference)       -->
+<!-- ══════════════════════════════════════════ -->
+<div class="no-break">
+  <div class="section-title dark">{{s_volume}}. BUSINESS VOLUME (ACCRUAL REFERENCE)</div>
   <table>
     <tr>
       <th style="width: 70%">ITEM</th>
       <th style="width: 30%" class="right">AMOUNT (KSH)</th>
     </tr>
     <tr>
-      <td>Gross Revenue</td>
-      <td class="right">{{gross_revenue}}</td>
+      <td>Total Value of Goods Sold or Agreed</td>
+      <td class="right">{{accrual_goods_sold_value}}</td>
     </tr>
     <tr>
       <td>Cost of Goods Sold (COGS — FIFO weighted average)</td>
-      <td class="right" style="color: #b71c1c">— {{total_cogs}}</td>
-    </tr>
-    <tr class="subtotal">
-      <td>GROSS PROFIT</td>
-      <td class="right">{{gross_profit}}</td>
+      <td class="right">{{total_cogs}}</td>
     </tr>
     <tr>
       <td style="color: #666; font-size: 8pt; padding-left: 16px">
-        Gross Profit Margin
+        of which cost of goods given on credit
       </td>
       <td class="right" style="color: #666; font-size: 8pt">
-        {{gross_margin_percent}}%
+        {{credit_cogs}}
       </td>
     </tr>
   </table>
+  <div style="font-size: 8pt; color: #666; margin-top: 4px">
+    Trading volume only — these figures are neither cash nor profit. This
+    statement reports profit on a cost-recovery basis (Section {{s_profit}}): a sale
+    contributes profit as payment is received, not when the goods leave.
+  </div>
 </div>
 
 <!-- ══════════════════════════════════════════ -->
-<!-- SECTION 3: OPERATING EXPENSES & LOSSES   -->
+<!-- EXPENSES & LOSSES                         -->
 <!-- ══════════════════════════════════════════ -->
 <div class="no-break">
   <div class="section-title red">
-    3. OPERATING EXPENSES &amp; LOSSES (MONEY OUT)
+    {{s_expenses}}. OPERATING EXPENSES &amp; LOSSES (MONEY OUT)
   </div>
   <table>
     <tr>
@@ -83,37 +160,66 @@
       <th style="width: 30%" class="right">AMOUNT (KSH)</th>
     </tr>
     <tr>
-      <td>Operating Expenses (rent, salaries, utilities, etc.)</td>
-      <td class="right">{{expense_total}}</td>
+      <td>Petty Expenses (daily till spend — lunch, airtime, small runs)</td>
+      <td class="right">{{petty_expenses}}</td>
+    </tr>
+    <tr>
+      <td>Operating Expenses (rent, salaries, utilities, transport)</td>
+      <td class="right">{{operating_expenses}}</td>
     </tr>
     <tr>
       <td>Spoiled / Expired Stock Write-off</td>
       <td class="right">{{spoiled_total}}</td>
     </tr>
-    <tr class="total-red">
-      <td>TOTAL DEDUCTIONS</td>
-      <td class="right">{{total_money_out}}</td>
-    </tr>
   </table>
+  <div style="font-size: 8pt; color: #666; margin-top: 4px">
+    Shown separately and deliberately not summed: petty expenses come out of
+    the day's till and reduce Cash in Hand, while operating expenses are
+    settled outside it and are charged against profit at period end. Combining
+    them would double-count against one figure or the other.
+  </div>
 </div>
 
 <!-- ══════════════════════════════════════════ -->
-<!-- SECTION 4: NET PROFIT SUMMARY            -->
+<!-- CASH POSITION & NET PROFIT                -->
 <!-- ══════════════════════════════════════════ -->
 <div class="no-break">
-  <div class="section-title green">4. NET PROFIT &amp; CASH POSITION</div>
+  <div class="section-title green">{{s_profit}}. CASH POSITION &amp; NET PROFIT</div>
   <table>
     <tr>
       <th style="width: 70%">ITEM</th>
       <th style="width: 30%" class="right">AMOUNT (KSH)</th>
     </tr>
     <tr>
-      <td>Gross Profit</td>
-      <td class="right">{{gross_profit}}</td>
+      <td>Revenue Collected</td>
+      <td class="right">{{revenue_collected}}</td>
     </tr>
     <tr>
-      <td>Less: Total Deductions</td>
-      <td class="right" style="color: #b71c1c">— {{total_money_out}}</td>
+      <td>Less: Petty Expenses</td>
+      <td class="right" style="color: #b71c1c">— {{petty_expenses}}</td>
+    </tr>
+    <tr class="subtotal">
+      <td>CASH IN HAND</td>
+      <td class="right">{{cash_in_hand}}</td>
+    </tr>
+  </table>
+
+  <table style="margin-top: 10px">
+    <tr>
+      <th style="width: 70%">PROFIT</th>
+      <th style="width: 30%" class="right">AMOUNT (KSH)</th>
+    </tr>
+    <tr>
+      <td>Realized Profit (cost recovered first, after petty expenses)</td>
+      <td class="right">{{realized_profit}}</td>
+    </tr>
+    <tr>
+      <td>Less: Operating Expenses</td>
+      <td class="right" style="color: #b71c1c">— {{operating_expenses}}</td>
+    </tr>
+    <tr>
+      <td>Less: Spoiled / Expired Stock</td>
+      <td class="right" style="color: #b71c1c">— {{spoiled_total}}</td>
     </tr>
     <tr class="total-net">
       <td>NET PROFIT</td>
@@ -121,24 +227,25 @@
     </tr>
     <tr>
       <td style="font-size: 8pt; color: #666; padding-left: 16px">
-        Net Profit Margin
+        Net Profit Margin (of Revenue Collected)
       </td>
       <td class="right" style="font-size: 8pt; color: #666">
         {{net_margin_percent}}%
       </td>
     </tr>
-    <tr class="subtotal">
-      <td>CASH IN HAND (Cash + M-Pesa less expenses &amp; spoilage)</td>
-      <td class="right">{{money_in_hand}}</td>
-    </tr>
   </table>
+  <div style="font-size: 8pt; color: #666; margin-top: 4px">
+    Realized Profit counts a sale's profit only once its cost has been
+    recovered from money actually received, so credit and hire purchase
+    contribute as customers pay rather than when goods are handed over.
+  </div>
 </div>
 
 <!-- ══════════════════════════════════════════ -->
-<!-- SECTION 5: RECEIVABLES                   -->
+<!-- RECEIVABLES                               -->
 <!-- ══════════════════════════════════════════ -->
 <div class="no-break">
-  <div class="section-title dark">5. RECEIVABLES (MONEY OWED TO BUSINESS)</div>
+  <div class="section-title dark">{{s_receivables}}. RECEIVABLES (MONEY OWED TO BUSINESS)</div>
   <table>
     <tr>
       <th style="width: 70%">TYPE</th>
@@ -157,7 +264,7 @@
       <td class="right" style="color: #054d32">{{credit_repaid}}</td>
     </tr>
     <tr>
-      <td>HP Installments Collected This Period</td>
+      <td>HP Deposits &amp; Installments Collected This Period</td>
       <td class="right" style="color: #054d32">{{hp_collected}}</td>
     </tr>
     <tr class="subtotal">
@@ -168,41 +275,77 @@
 </div>
 
 <!-- ══════════════════════════════════════════ -->
-<!-- SECTION 6: DETAILED TRANSACTION LEDGER   -->
+<!-- DETAILED TRANSACTION LEDGER               -->
+<!-- Only present on FULL statements. A Summary statement stops at        -->
+<!-- the receivables section and says so explicitly, so nobody         -->
+<!-- mistakes it for a complete record.                                -->
+<!--                                                                      -->
+<!-- The STATEMENT TOTAL row now lives as the LAST <tr> inside <tbody>,   -->
+<!-- not in a <tfoot>. A <tfoot> is a repeating page element in Chromium's -->
+<!-- print engine — it gets redrawn at the bottom of every page fragment  -->
+<!-- a table spans, which is why it was showing up after every page       -->
+<!-- instead of only once at the true end of the ledger. As a plain last  -->
+<!-- row it just flows naturally and appears exactly once, after the      -->
+<!-- final transaction, wherever that lands.                              -->
+<!--                                                                      -->
+<!-- QTY column widened and given white-space: nowrap (via .qty-cell) so  -->
+<!-- "2 units" can't wrap onto two lines — that wrap was inflating every   -->
+<!-- row's height, which is what made PRODUCT/ITEM look oversized/empty   -->
+<!-- next to it.                                                          -->
 <!-- ══════════════════════════════════════════ -->
+{{#if show_ledger}}
 <div class="page-break"></div>
-<div class="section-title dark">6. DETAILED TRANSACTION LEDGER</div>
-<table>
+<div class="section-title dark">{{s_ledger}}. DETAILED TRANSACTION LEDGER</div>
+<table class="ledger-table">
   <thead>
+    <!-- No fixed width percentages: the table is table-layout:auto, so
+         dropping them lets every column shrink to its widest cell the way
+         Excel's autofit does. The short columns are nowrap (.fit) so they
+         take exactly what they need and never wrap; PRODUCT / ITEM is the
+         only free-text column and absorbs whatever is left over. Fewer
+         wrapped lines means shorter rows and fewer pages. -->
     <tr>
-      <th style="width: 22%">PRODUCT / ITEM</th>
-      <th style="width: 8%" class="center">QTY</th>
-      <th style="width: 11%" class="center">TYPE</th>
-      <th style="width: 11%" class="center">METHOD</th>
-      <th style="width: 13%" class="center">PHONE</th>
-      <th style="width: 13%" class="mono">TRANS ID</th>
-      <th style="width: 11%" class="center">DATE</th>
-      <th style="width: 11%" class="right">KSH</th>
+      <th>PRODUCT / ITEM</th>
+      <th class="center fit">QTY</th>
+      <th class="center fit">TYPE / METHOD</th>
+      <th class="center fit">PHONE</th>
+      <th class="mono fit">TRANS ID</th>
+      <th class="center fit">DATE</th>
+      <th class="right fit">KSH</th>
     </tr>
   </thead>
   <tbody>
     {{#each transactions}}
     <tr>
       <td>{{this.product}}</td>
-      <td class="center">{{this.qty}}</td>
-      <td class="center" style="font-size: 7.5pt">{{this.type}}</td>
-      <td class="center">{{this.method}}</td>
-      <td class="center" style="font-size: 8pt">{{this.phone}}</td>
-      <td class="mono">{{this.tx_id}}</td>
-      <td class="center" style="font-size: 8pt">{{this.time}}</td>
-      <td class="right" style="font-weight: 700">{{this.amount}}</td>
+      <td class="center qty-cell">{{this.qty}}</td>
+      <td class="center fit">{{this.type_method}}</td>
+      <td class="center fit">{{this.phone}}</td>
+      <td class="mono fit">{{this.tx_id}}</td>
+      <td class="center fit">{{this.time}}</td>
+      <td class="right fit" style="font-weight: 700">{{this.amount}}</td>
     </tr>
     {{/each}}
-  </tbody>
-  <tfoot>
     <tr class="total-green">
-      <td colspan="7">STATEMENT TOTAL</td>
-      <td class="right">{{gross_revenue}}</td>
+      <td colspan="6">
+        STATEMENT TOTAL — NET OF ALL LINES ({{ledger_transaction_count}} LINE
+        ITEMS)
+      </td>
+      <td class="right fit">{{ledger_net_total}}</td>
     </tr>
-  </tfoot>
+  </tbody>
 </table>
+{{else}}
+<div class="no-break" style="margin-top: 8px;">
+  <div class="section-title dark">{{s_ledger}}. DETAILED TRANSACTION LEDGER</div>
+  <table>
+    <tr>
+      <td style="text-align: center; color: #666; font-style: italic; padding: 16px;">
+        This is a Summary Statement — the line-by-line transaction ledger is not
+        included. Request a Full Statement for this same period to obtain the
+        complete, transaction-level record.
+      </td>
+    </tr>
+  </table>
+</div>
+{{/if}}

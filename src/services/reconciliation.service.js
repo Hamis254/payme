@@ -1,5 +1,6 @@
 // reconciliation.service.js
 import { db, sql } from '#config/database.js';
+import { startOfBusinessDay, endOfBusinessDay } from '#utils/businessDay.js';
 import { sales } from '#models/sales.model.js';
 import { expenses } from '#models/expense.model.js';
 import { walletTransactions } from '#models/myWallet.model.js';
@@ -86,8 +87,8 @@ export const calculateSystemCash = async (businessId, startDate, endDate) => {
           eq(sales.business_id, businessId),
           eq(sales.payment_mode, 'cash'),
           eq(sales.status, 'completed'),
-          gte(sales.created_at, new Date(startDate)),
-          lte(sales.created_at, new Date(endDate))
+          gte(sales.created_at, startOfBusinessDay(startDate)),
+          lte(sales.created_at, endOfBusinessDay(endDate))
         )
       );
 
@@ -116,8 +117,8 @@ export const calculateSystemCash = async (businessId, startDate, endDate) => {
         and(
           eq(walletTransactions.business_id, businessId),
           eq(walletTransactions.type, 'charge'),
-          gte(walletTransactions.created_at, new Date(startDate)),
-          lte(walletTransactions.created_at, new Date(endDate))
+          gte(walletTransactions.created_at, startOfBusinessDay(startDate)),
+          lte(walletTransactions.created_at, endOfBusinessDay(endDate))
         )
       );
 
@@ -212,12 +213,12 @@ export const getCashReconciliations = async (businessId, options = {}) => {
     const conditions = [eq(cashReconciliations.business_id, businessId)];
     if (startDate) {
       conditions.push(
-        gte(cashReconciliations.reconciliation_date, new Date(startDate))
+        gte(cashReconciliations.reconciliation_date, startOfBusinessDay(startDate))
       );
     }
     if (endDate) {
       conditions.push(
-        lte(cashReconciliations.reconciliation_date, new Date(endDate))
+        lte(cashReconciliations.reconciliation_date, endOfBusinessDay(endDate))
       );
     }
 
@@ -342,8 +343,8 @@ export const calculateMpesaTransactions = async (
           eq(sales.business_id, businessId),
           eq(sales.payment_mode, 'mpesa'),
           eq(sales.status, 'completed'),
-          gte(sales.created_at, new Date(startDate)),
-          lte(sales.created_at, new Date(endDate))
+          gte(sales.created_at, startOfBusinessDay(startDate)),
+          lte(sales.created_at, endOfBusinessDay(endDate))
         )
       );
 

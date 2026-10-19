@@ -11,8 +11,8 @@ import base64 from 'base-64';
 //   Default is sandbox.
 //
 // TWO PAYBILL ARCHITECTURE:
-//   PayMe Platform Paybill (650880): Used for token purchases by merchants.
-//     - MPESA_PASSKEY: passkey for paybill 650880
+//   PayMe Platform Till (3485049): Used for token purchases by merchants.
+//     - MPESA_PASSKEY: passkey for till 3485049
 //
 //   Business Paybill/Till: Set per-business in payment_configs table.
 //     - Each business configures their own shortcode + passkey in Settings.
@@ -23,9 +23,9 @@ import base64 from 'base-64';
 //   Till:    account_reference field (store name) — optional, defaults to till number
 // ============================================================================
 
-// Fixed PayMe platform paybill for token purchases
-const WALLET_PAYBILL = '650880';
-const WALLET_ACCOUNT_REFERENCE = '37605544';
+// Fixed PayMe platform till for token purchases
+const WALLET_TILL_NUMBER = '3485049';
+const WALLET_ACCOUNT_REFERENCE = 'Onlinebuygoods';
 
 // Switch between sandbox and production with one env variable
 const MPESA_BASE_URL =
@@ -71,10 +71,10 @@ const buildMpesaPassword = (shortcode, passkey) => {
 };
 
 // ============================================================================
-// STK PUSH — TOKEN PURCHASES (PayMe Platform Paybill)
+// STK PUSH — TOKEN PURCHASES (PayMe Platform Till)
 // ============================================================================
-// All merchants buy tokens by paying into PayMe's own paybill (650880).
-// MPESA_PASSKEY must match the passkey for paybill 650880 in Daraja portal.
+// All merchants buy tokens by paying into PayMe's till number (3485049).
+// MPESA_PASSKEY must match the passkey for till 3485049 in Daraja portal.
 // ============================================================================
 
 export const initiateTokenPurchase = async ({
@@ -94,20 +94,20 @@ export const initiateTokenPurchase = async ({
 
     if (!passKey) {
       throw new Error(
-        'Missing MPESA_PASSKEY environment variable (required for PayMe platform paybill)'
+        'Missing MPESA_PASSKEY environment variable (required for PayMe platform till)'
       );
     }
 
-    const { password, timestamp } = buildMpesaPassword(WALLET_PAYBILL, passKey);
+    const { password, timestamp } = buildMpesaPassword(WALLET_TILL_NUMBER, passKey);
 
     const payload = {
-      BusinessShortCode: WALLET_PAYBILL,
+      BusinessShortCode: WALLET_TILL_NUMBER,
       Password: password,
       Timestamp: timestamp,
-      TransactionType: 'CustomerPayBillOnline',
+      TransactionType: 'CustomerBuyGoodsOnline',
       Amount: Math.round(amount),
       PartyA: phone,
-      PartyB: WALLET_PAYBILL,
+      PartyB: WALLET_TILL_NUMBER,
       PhoneNumber: phone,
       CallBackURL: process.env.MPESA_CALLBACK_URL,
       AccountReference: WALLET_ACCOUNT_REFERENCE,
@@ -116,7 +116,7 @@ export const initiateTokenPurchase = async ({
 
     logger.info('Initiating token purchase STK push', {
       env: process.env.MPESA_ENV || 'sandbox',
-      paybill: WALLET_PAYBILL,
+      tillNumber: WALLET_TILL_NUMBER,
       account: WALLET_ACCOUNT_REFERENCE,
       amount,
     });
@@ -412,4 +412,7 @@ export const formatMpesaResponse = response => {
   };
 };
 
-export { WALLET_PAYBILL, WALLET_ACCOUNT_REFERENCE };
+// Exported so other modules (e.g. paymentConfig.service.js's verify step)
+// reuse the same sandbox/production switch and token-fetch logic instead of
+// duplicating it with a hardcoded sandbox URL.
+export { WALLET_TILL_NUMBER, WALLET_ACCOUNT_REFERENCE, MPESA_BASE_URL, getAccessToken };

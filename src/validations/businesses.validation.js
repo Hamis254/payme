@@ -6,6 +6,7 @@ export const createBusinessSchema = z.object({
   name: z.string().min(2).max(255).trim(),
   location: z.string().min(2).max(255).trim(),
   location_description: z.string().max(512).trim().optional(),
+  logo_url: z.string().url('logo_url must be a valid URL').max(1024).optional(),
   payment_method: paymentMethodEnum,
   payment_identifier: z.string().min(3).max(50).trim(),
 });
@@ -14,6 +15,7 @@ export const updateBusinessSchema = z.object({
   name: z.string().min(2).max(255).trim().optional(),
   location: z.string().min(2).max(255).trim().optional(),
   location_description: z.string().max(512).trim().optional(),
+  logo_url: z.string().url('logo_url must be a valid URL').max(1024).optional(),
   payment_method: paymentMethodEnum.optional(),
   payment_identifier: z.string().min(3).max(50).trim().optional(),
 });
@@ -33,7 +35,7 @@ export const validatePaymentDetails = ({
   }
 
   if (payment_method === 'wallet') {
-    // Wallet uses fixed paybill 650880 and account 37605544, no validation needed
+    // Wallet uses fixed till number 3485049 and account reference Onlinebuygoods, no validation needed
     return;
   }
 };

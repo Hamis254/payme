@@ -65,7 +65,7 @@ export const initiateTokenPurchase = async (
     const packageInfo = tokenPackages[packageType];
     if (!packageInfo) throw new Error('Invalid package type');
 
-    // Token purchases always use the platform wallet paybill (650880)
+    // Token purchases always use the platform wallet till number (3485049)
 
     const [purchase] = await db
       .insert(tokenPurchases)

@@ -1,15 +1,96 @@
 import logger from '#config/logger.js';
 import { db } from '#config/database.js';
-import { eq, and, desc, gte, lte } from 'drizzle-orm';
+import { eq, and, desc, gte, lte, inArray, sql } from 'drizzle-orm';
 import {
   creditAccounts,
   creditSales,
   creditPayments,
   creditLedger,
+  getCreditSalesForBusiness as getCreditSalesForBusinessFromModel,
 } from '#models/credit.model.js';
 import { businesses } from '#models/setting.model.js';
 import { sales, saleItems } from '#models/sales.model.js';
 import { products } from '#models/stock.model.js';
+import { startOfBusinessDay, endOfBusinessDay } from '#utils/businessDay.js';
+
+const LOW_STOCK_FLOOR = 5; // flat default until a per-product threshold field exists
+
+// ============ CREDIT RISK ASSESSMENT ============
+
+/**
+ * Runs BEFORE createCreditSale — two independent checks, either of which
+ * can flag risk. Neither blocks the sale; processPayMe uses the result
+ * to return a 409 "confirm to proceed" response instead of creating the
+ * sale, unless override_stock_warning was already sent.
+ *
+ * 1. Business-wide: would this sale push total unpaid credit above
+ *    credit_risk_threshold_percent of current inventory value?
+ * 2. Per-item: does the cart include a product already at/below
+ *    LOW_STOCK_FLOOR units, checked AFTER this sale's own deduction
+ *    (cartItems here are createSale's post-deduction processedItems,
+ *    so a fresh products query reflects the real remaining quantity).
+ */
+export const assessCreditStockRisk = async (
+  businessId,
+  cartItems = [],
+  saleAmount,
+  tx = db
+) => {
+  const [{ threshold }] = await tx
+    .select({ threshold: businesses.credit_risk_threshold_percent })
+    .from(businesses)
+    .where(eq(businesses.id, businessId))
+    .limit(1);
+
+  const [{ totalUnpaid }] = await tx
+    .select({ totalUnpaid: sql`COALESCE(SUM(${creditAccounts.balance_due}), 0)` })
+    .from(creditAccounts)
+    .where(
+      and(eq(creditAccounts.business_id, businessId), eq(creditAccounts.is_active, true))
+    );
+
+  const [{ inventoryValue }] = await tx
+    .select({
+      inventoryValue: sql`COALESCE(SUM(${products.current_quantity} * ${products.buying_price_per_unit}), 0)`,
+    })
+    .from(products)
+    .where(and(eq(products.business_id, businessId), eq(products.is_active, 1)));
+
+  const unpaidNow = Number(totalUnpaid) || 0;
+  const invValue = Number(inventoryValue) || 0;
+  const thresholdPercent = Number(threshold) || 70;
+  const wouldBeUnpaid = unpaidNow + Number(saleAmount);
+  const businessWideRisk = invValue > 0 && wouldBeUnpaid > invValue * (thresholdPercent / 100);
+
+  const productIds = (cartItems || []).map(item => item.product_id);
+  const currentStock = productIds.length
+    ? await tx
+        .select({
+          id: products.id,
+          name: products.name,
+          current_quantity: products.current_quantity,
+        })
+        .from(products)
+        .where(and(eq(products.business_id, businessId), inArray(products.id, productIds)))
+    : [];
+
+  const lowStockItems = currentStock.filter(
+    product => Number(product.current_quantity) <= LOW_STOCK_FLOOR
+  );
+
+  return {
+    atRisk: businessWideRisk || lowStockItems.length > 0,
+    businessWideRisk,
+    totalUnpaidCredit: unpaidNow,
+    inventoryValue: invValue,
+    thresholdPercent,
+    lowStockItems: lowStockItems.map(product => ({
+      product_id: product.id,
+      name: product.name,
+      remaining: Number(product.current_quantity),
+    })),
+  };
+};
 
 // ============ CREDIT ACCOUNTS ============
 
@@ -134,6 +215,164 @@ export const deactivateCreditAccount = async (userId, accountId) => {
 };
 
 // ============ CREDIT SALES ============
+
+/**
+ * Record a sale against a customer's credit account.
+ *
+ * `items` is accepted for signature compatibility with the caller, but not
+ * persisted here — the sale's line items are already written to
+ * `sale_items` by createSale() in sales.service.js, so storing them again
+ * here would just duplicate that data.
+ *
+ * Accepts an optional `trx` — when processPayMe is running the whole sale
+ * (stock deduction, sale row, this credit record, and the token-deduction
+ * ledger entry) as one atomic unit, this needs to write into THAT SAME
+ * transaction rather than opening its own. Opening a second, independent
+ * transaction here was exactly what let a credit sale report failure back
+ * to the client while the stock deduction from createSale() — already
+ * committed under the caller's separate transaction — stayed in place.
+ * Any other caller that doesn't supply a trx gets the old behavior:
+ * this function opens and manages its own transaction as before.
+ *
+ * @param {number} userId - the business owner (for ownership verification)
+ * @param {number} businessId
+ * @param {number} accountId - credit_accounts.id
+ * @param {number} saleId - sales.id, from the sale already created by createSale()
+ * @param {number|string} totalAmount
+ * @param {string|Date} dueDate
+ * @param {Array} [items] - unused, accepted for call-signature compatibility
+ * @param {object|null} [trx] - optional external transaction client
+ * @returns {Promise<{ creditSale: object, account: object }>}
+ */
+export const createCreditSale = async (
+  userId,
+  businessId,
+  accountId,
+  saleId,
+  totalAmount,
+  dueDate,
+  // eslint-disable-next-line no-unused-vars
+  items,
+  trx = null
+) => {
+  try {
+    if (!accountId) {
+      throw new Error('credit_account_id is required for credit sales');
+    }
+    if (!saleId) {
+      throw new Error('saleId is required for credit sales');
+    }
+    if (!dueDate) {
+      throw new Error('credit_due_date is required for credit sales');
+    }
+
+    // Verify the account exists, is owned by this user, and belongs to
+    // the specific business making the sale (not just any business the
+    // user owns).
+    const accountData = await getCreditAccountById(userId, accountId);
+
+    if (accountData.account.business_id !== businessId) {
+      throw new Error('Credit account does not belong to this business');
+    }
+
+    if (!accountData.account.is_active) {
+      throw new Error('Credit account is inactive');
+    }
+
+    const amount = Number(totalAmount);
+    const currentBalance = Number(accountData.account.balance_due);
+    const creditLimit = Number(accountData.account.credit_limit);
+    const newBalance = currentBalance + amount;
+
+    // credit_limit of 0 is treated as "no limit set" — same convention
+    // used by getCreditSummaryForBusiness's utilization calculation above.
+    if (creditLimit > 0 && newBalance > creditLimit) {
+      throw new Error(
+        `Credit limit exceeded: balance would be ${newBalance.toFixed(2)}, limit is ${creditLimit.toFixed(2)}`
+      );
+    }
+
+    // Everything below must succeed together: the credit_sales row, the
+    // account's running balance, and the audit ledger entry all have to
+    // agree, or none of them should be written.
+    const runInTransaction = async tx => {
+      const [creditSale] = await tx
+        .insert(creditSales)
+        .values({
+          sale_id: saleId,
+          account_id: accountId,
+          due_date: new Date(dueDate),
+          outstanding_amount: String(amount),
+          status: 'open',
+        })
+        .returning();
+
+      const [updatedAccount] = await tx
+        .update(creditAccounts)
+        .set({
+          balance_due: String(newBalance),
+          updated_at: new Date(),
+        })
+        .where(eq(creditAccounts.id, accountId))
+        .returning();
+
+      await tx.insert(creditLedger).values({
+        account_id: accountId,
+        type: 'sale',
+        amount: String(amount),
+        balance_after: String(newBalance),
+        reference: `Credit sale #${creditSale.id}`,
+        created_by: userId,
+      });
+
+      return { creditSale, account: updatedAccount };
+    };
+
+    const result = trx
+      ? await runInTransaction(trx)
+      : await db.transaction(runInTransaction);
+
+    logger.info('Credit sale recorded', {
+      accountId,
+      saleId,
+      amount,
+      newBalance,
+      creditSaleId: result.creditSale.id,
+    });
+
+    return result;
+  } catch (e) {
+    logger.error('Error creating credit sale', e);
+    throw e;
+  }
+};
+
+export const getCreditSalesForBusiness = async (userId, businessId) => {
+  const result = await getCreditSalesForBusinessFromModel(userId, businessId);
+  const creditSalesList = result.credit_sales || [];
+
+  const summary = {
+    total_sales: creditSalesList.length,
+    total_outstanding: Number(
+      creditSalesList
+        .reduce((sum, item) => sum + Number(item.outstanding_amount || 0), 0)
+        .toFixed(2)
+    ),
+    open_count: creditSalesList.filter(item => item.status === 'open').length,
+    partial_count: creditSalesList.filter(item => item.status === 'partial').length,
+    paid_count: creditSalesList.filter(item => item.status === 'paid').length,
+    overdue_count: creditSalesList.filter(item => {
+      if (item.status !== 'open') return false;
+      const dueDate = item.due_date ? new Date(item.due_date) : null;
+      return dueDate && dueDate < new Date();
+    }).length,
+  };
+
+  return {
+    ...result,
+    summary,
+  };
+};
 
 export const getCreditSalesForAccount = async (
   userId,
@@ -475,11 +714,11 @@ export const getCustomerStatement = async (
     const conditions = [eq(creditLedger.account_id, accountId)];
 
     if (startDate) {
-      conditions.push(gte(creditLedger.created_at, new Date(startDate)));
+      conditions.push(gte(creditLedger.created_at, startOfBusinessDay(startDate)));
     }
 
     if (endDate) {
-      conditions.push(lte(creditLedger.created_at, new Date(endDate)));
+      conditions.push(lte(creditLedger.created_at, endOfBusinessDay(endDate)));
     }
 
     const ledgerEntries = await db

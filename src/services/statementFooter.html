@@ -1,149 +1,61 @@
 <!-- ══════════════════════════════════════════ -->
-<!-- SECTION 7: SECURITY & VERIFICATION       -->
+<!-- SECURITY, LEGAL & FOOTER BAR              -->
+<!--                                                                      -->
+<!-- All three used to be separate siblings, each with its own generous   -->
+<!-- margins, and the security box gave the QR a full 40% table cell it   -->
+<!-- never came close to filling — that column of white space was most    -->
+<!-- of the bulk. They are now one .doc-footer block:                     -->
+<!--                                                                      -->
+<!--   * break-inside: avoid on the wrapper keeps the whole thing on one  -->
+<!--     page. It can no longer split with the code on one page and the   -->
+<!--     QR on the next, which is what made a verifier's job impossible.  -->
+<!--   * margin-top: auto (body is a flex column) drops it to the foot of -->
+<!--     the page whenever there is room left over.                       -->
+<!--   * The QR sits in a shrink-to-fit cell beside the text instead of   -->
+<!--     owning 40% of the width.                                         -->
 <!-- ══════════════════════════════════════════ -->
-<div
-  class="no-break"
-  style="
-    margin-top: 24px;
-    border: 1.5px solid #054d32;
-    border-radius: 4px;
-    padding: 14px 16px;
-    background: #f9fcf9;
-  "
->
-  <div class="section-title green" style="margin-bottom: 12px">
-    7. DOCUMENT SECURITY &amp; VERIFICATION
-  </div>
-
-  <div style="display: table; width: 100%">
-    <!-- Left: verification code + SHA -->
-    <div
-      style="
-        display: table-cell;
-        vertical-align: top;
-        width: 60%;
-        padding-right: 20px;
-      "
-    >
-      <p
-        style="
-          font-size: 8pt;
-          font-weight: 800;
-          color: #333;
-          margin-bottom: 4px;
-          text-transform: uppercase;
-        "
-      >
-        Verification Code
-      </p>
-      <p
-        style="
-          font-size: 20pt;
-          font-weight: 900;
-          color: #054d32;
-          letter-spacing: 2px;
-          margin-bottom: 8px;
-        "
-      >
-        {{verification_code}}
-      </p>
-      <p style="font-size: 7.5pt; color: #555; margin-bottom: 6px">
-        SHA-256 Fingerprint:<br />
-        <span
-          style="
-            font-family: monospace;
-            font-size: 7pt;
-            color: #333;
-            word-break: break-all;
-          "
-          >{{sha256_fingerprint}}</span
-        >
-      </p>
-      <p style="font-size: 7.5pt; color: #555; line-height: 1.6">
-        Scan the QR code or visit <strong>payme.co.ke/verify</strong> and enter
-        the verification code above to confirm the authenticity of this
-        statement.<br />
-        This document is digitally signed by the PayMe Financial Engine.
-      </p>
+<div class="doc-footer">
+  <div class="security-strip">
+    <div class="security-title">
+      {{s_security}}. DOCUMENT SECURITY &amp; VERIFICATION
     </div>
 
-    <!-- Right: QR code -->
-    <div
-      style="
-        display: table-cell;
-        vertical-align: top;
-        text-align: center;
-        width: 40%;
-      "
-    >
-      <img
-        src="{{qr_code_url}}"
-        alt="Verification QR Code"
-        style="
-          width: 90px;
-          height: 90px;
-          border: 1px solid #ccc;
-          padding: 4px;
-          border-radius: 4px;
-        "
-      />
-      <p
-        style="font-size: 7.5pt; color: #888; margin-top: 4px; font-weight: 700"
-      >
-        SCAN TO VERIFY
-      </p>
-      <p style="font-size: 6.5pt; color: #aaa; margin-top: 2px">
-        payme.co.ke/verify
-      </p>
+    <div class="security-row">
+      <div class="security-main">
+        <span class="sec-label">Verification Code</span>
+        <span class="sec-code">{{verification_code}}</span>
+        <div class="sec-sha">
+          SHA-256: <span class="mono">{{sha256_fingerprint}}</span>
+        </div>
+        <div class="sec-note">
+          Scan the QR or visit <strong>payme.co.ke/verify</strong> and enter the
+          code above to confirm this statement. Digitally signed by the PayMe
+          Financial Engine.
+        </div>
+      </div>
+
+      <div class="security-qr">
+        <img src="{{qr_code_url}}" alt="Verification QR Code" />
+        <div class="qr-caption">SCAN TO VERIFY</div>
+      </div>
     </div>
   </div>
-</div>
 
-<!-- ══════════════════════════════════════════ -->
-<!-- LEGAL DISCLAIMER                         -->
-<!-- ══════════════════════════════════════════ -->
-<div
-  style="
-    margin-top: 16px;
-    font-size: 7.5pt;
-    color: #666;
-    text-align: justify;
-    border-top: 1px solid #e0e0e0;
-    padding-top: 12px;
-    line-height: 1.7;
-  "
->
-  <strong>Data Integrity &amp; Privacy Statement:</strong>
-  This financial statement is generated by the PayMe Business Financial
-  Management System and is compliant with the
-  <strong>Kenya Data Protection Act, 2019</strong>. All transaction records are
-  protected by SHA-256 digital fingerprinting and are independently verifiable
-  via the QR code and verification code printed above. This document is intended
-  solely for financial reconciliation, credit assessment, and business reporting
-  purposes. Any unauthorized alteration, reproduction, or misrepresentation of
-  this document is strictly prohibited and may constitute an offence under
-  Kenyan law. PayMe does not warrant or guarantee acceptance of this statement
-  by any financial institution — this depends on the policies of the institution
-  in question.
-</div>
+  <div class="legal-note">
+    <strong>Data Integrity &amp; Privacy:</strong> Generated by the PayMe
+    Business Financial Management System in line with the
+    <strong>Kenya Data Protection Act, 2019</strong>. Records are protected by
+    SHA-256 fingerprinting and independently verifiable via the code above.
+    Intended for financial reconciliation, credit assessment and business
+    reporting. Unauthorised alteration or misrepresentation is prohibited and
+    may constitute an offence under Kenyan law. PayMe does not guarantee
+    acceptance of this statement by any financial institution.
+  </div>
 
-<!-- ══════════════════════════════════════════ -->
-<!-- FOOTER BAR                               -->
-<!-- ══════════════════════════════════════════ -->
-<div
-  style="
-    margin-top: 14px;
-    border-top: 2px solid #054d32;
-    padding-top: 8px;
-    text-align: center;
-    font-size: 7.5pt;
-    color: #555;
-  "
->
-  <strong style="color: #054d32; font-size: 9pt">PAYME</strong> &nbsp;|&nbsp;
-  Business Financial Management System &nbsp;|&nbsp; www.payme.co.ke
-  &nbsp;|&nbsp; support@payme.co.ke &nbsp;|&nbsp; +254 746 478 955
-  <br style="margin-bottom: 3px" />
-  Nairobi, Kenya &nbsp;|&nbsp; All rights reserved &copy; 2026 &nbsp;|&nbsp;
-  <em>This is a system-generated document. No physical signature required.</em>
+  <div class="footer-bar">
+    <strong>PAYME</strong> &nbsp;|&nbsp; www.payme.co.ke &nbsp;|&nbsp;
+    support@payme.co.ke &nbsp;|&nbsp; +254 746 478 955 &nbsp;|&nbsp; Nairobi,
+    Kenya &nbsp;|&nbsp; &copy; 2026 &nbsp;|&nbsp;
+    <em>System-generated — no physical signature required.</em>
+  </div>
 </div>

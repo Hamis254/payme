@@ -22,9 +22,37 @@ const router = express.Router();
  */
 router.post(
   '/:businessId/record',
+  offlineQueueMiddleware('expense'),
   authenticateToken,
   validateBusinessId('params'),
   recordExpenseHandler
+);
+
+/**
+ * GET /api/expenses/:businessId/summary
+ * Get expense summary statistics.
+ * NOTE: must be registered BEFORE '/:businessId/:expenseId' below —
+ * Express matches routes in registration order, and ':expenseId' is a
+ * wildcard that would otherwise swallow this request first (treating the
+ * literal string "summary" as an expenseId).
+ */
+router.get(
+  '/:businessId/summary',
+  authenticateToken,
+  validateBusinessId('params'),
+  getExpenseSummaryHandler
+);
+
+/**
+ * GET /api/expenses/:businessId/analytics
+ * Get expense analytics (by_category, monthly_trend, top_expenses, etc).
+ * Same ordering requirement as /summary above.
+ */
+router.get(
+  '/:businessId/analytics',
+  authenticateToken,
+  validateBusinessId('params'),
+  getExpenseAnalyticsHandler
 );
 
 /**
@@ -48,36 +76,6 @@ router.get(
   authenticateToken,
   validateBusinessId('params'),
   listExpensesHandler
-);
-
-/**
- * GET /api/expenses/:businessId/summary
- * Get expense summary statistics.
- */
-router.get(
-  '/:businessId/summary',
-  authenticateToken,
-  validateBusinessId('params'),
-  getExpenseSummaryHandler
-);
-
-/**
- * GET /api/expenses/:businessId/analytics
- * Get expense analytics (by_category, monthly_trend, top_expenses, etc).
- */
-router.get(
-  '/:businessId/analytics',
-  authenticateToken,
-  validateBusinessId('params'),
-  getExpenseAnalyticsHandler
-);
-
-router.post(
-  '/:businessId/record',
-  offlineQueueMiddleware('expense'),
-  authenticateToken,
-  validateBusinessId('params'),
-  recordExpenseHandler
 );
 
 /**

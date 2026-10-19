@@ -179,6 +179,37 @@ export const notifications = {
     },
   }),
 
+  hirePurchaseDue: args => ({
+    type: 'hire_purchase_due',
+    channel: 'sms',
+    title: '📅 Hire Purchase Installment Due',
+    message: `Installment ${args.installment_number} of KES ${args.amount_due} is due ${args.days_overdue > 0 ? `— ${args.days_overdue} day(s) overdue` : `on ${args.due_date}`} for ${args.customer_name}`,
+    related_id: args.agreement_id,
+    related_type: 'hire_purchase',
+    metadata: {
+      agreement_id: args.agreement_id,
+      installment_number: args.installment_number,
+      amount_due: args.amount_due,
+      due_date: args.due_date,
+      customer_name: args.customer_name,
+      days_overdue: args.days_overdue,
+    },
+  }),
+
+  trendingProduct: args => ({
+    type: 'trending_product',
+    channel: 'in_app',
+    title: '🔥 Trending Product',
+    message: `${args.product_name} is your top seller this week — ${args.quantity_sold} units sold`,
+    related_id: args.product_id,
+    related_type: 'product',
+    metadata: {
+      product_id: args.product_id,
+      product_name: args.product_name,
+      quantity_sold: args.quantity_sold,
+      period_days: args.period_days,
+    },
+  }),
   // Expense notifications
   expenseRecorded: args => ({
     type: 'expense_recorded',

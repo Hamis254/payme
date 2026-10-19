@@ -1,4 +1,3 @@
-// routes/credit.routes.js
 import { Router } from 'express';
 import { authenticateToken } from '#middleware/auth.middleware.js';
 import { revenueGuard } from '#middleware/revenueGuard.middleware.js';
@@ -18,6 +17,7 @@ import {
   getCreditSummary,
   getAgingReport,
   getCustomerStatement,
+  getCreditSalesHistory,
 } from '#controllers/credit.controller.js';
 import {
   createCreditAccountSchema,
@@ -39,7 +39,11 @@ router.post(
   validateRequest(createCreditAccountSchema),
   createCreditAccount
 );
-router.get('/accounts', validateRequest(creditQuerySchema), getCreditAccounts);
+router.get(
+  '/accounts',
+  validateRequest(creditQuerySchema, 'query'),
+  getCreditAccounts
+);
 router.get('/accounts/:accountId', getCreditAccount);
 router.patch(
   '/accounts/:accountId',
@@ -57,9 +61,10 @@ router.post(
 );
 router.get(
   '/accounts/:accountId/sales',
-  validateRequest(creditQuerySchema),
+  validateRequest(creditQuerySchema, 'query'),
   getCreditSales
 );
+router.get('/sales/business/:businessId', getCreditSalesHistory);
 router.get('/sales/:saleId', getCreditSale);
 
 // Payments
@@ -70,14 +75,14 @@ router.post(
 );
 router.get(
   '/accounts/:accountId/payments',
-  validateRequest(creditQuerySchema),
+  validateRequest(creditQuerySchema, 'query'),
   getCreditPayments
 );
 
 // Ledger
 router.get(
   '/accounts/:accountId/ledger',
-  validateRequest(creditQuerySchema),
+  validateRequest(creditQuerySchema, 'query'),
   getCreditLedger
 );
 
@@ -86,7 +91,7 @@ router.get('/summary', getCreditSummary);
 router.get('/reports/aging', getAgingReport);
 router.get(
   '/accounts/:accountId/statement',
-  validateRequest(creditQuerySchema),
+  validateRequest(creditQuerySchema, 'query'),
   getCustomerStatement
 );
 

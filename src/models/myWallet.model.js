@@ -68,7 +68,7 @@ export const tokenPurchases = pgTable('token_purchases', {
   completed_at: timestamp('completed_at'),
 });
 
-// Wallet payments via paybill 650880
+// Wallet payments via till 3485049
 // Used for payment processing when business is configured for wallet payments
 export const walletPayments = pgTable('wallet_payments', {
   id: serial('id').primaryKey(),
@@ -83,8 +83,8 @@ export const walletPayments = pgTable('wallet_payments', {
   payment_status: varchar('payment_status', { length: 20 })
     .notNull()
     .default('pending'), // pending | completed | failed
-  paybill: varchar('paybill', { length: 10 }).notNull(), // Fixed: 650880
-  account_reference: varchar('account_reference', { length: 50 }).notNull(), // Fixed: 37605544
+  paybill: varchar('paybill', { length: 10 }).notNull(), // Fixed: 3485049
+  account_reference: varchar('account_reference', { length: 50 }).notNull(), // Fixed: Onlinebuygoods
   mpesa_transaction_id: varchar('mpesa_transaction_id', { length: 128 }), // Set when payment completes
   callback_payload: text('callback_payload'), // M-Pesa callback data
   created_at: timestamp('created_at').defaultNow().notNull(),

@@ -12,10 +12,23 @@ import africastalking from 'africastalking';
 
 // ============ AFRICAS TALKING SMS CONFIG ============
 
-const AT = africastalking({
-  apiKey: process.env.AFRICANTALKING_API_KEY,
-  username: process.env.AFRICANTALKING_USERNAME,
-});
+// The SDK validates its credentials the moment it is constructed, so
+// building it at module scope made importing this file throw wherever the
+// SMS env vars aren't set — and it takes every transitive importer down
+// with it, which is how a credit/HP controller test ended up failing on
+// "username is required". Build it on first send and cache it, so the
+// credentials are only required by the code path that actually sends.
+let atClient = null;
+
+function getSMS() {
+  if (!atClient) {
+    atClient = africastalking({
+      apiKey: process.env.AFRICANTALKING_API_KEY,
+      username: process.env.AFRICANTALKING_USERNAME,
+    });
+  }
+  return atClient.SMS;
+}
 
 // ============ EMAIL CONFIG (Nodemailer) ============
 // Using Gmail example - you can change to SendGrid, your own SMTP, etc.
@@ -136,7 +149,7 @@ export const notificationService = {
         `Sending SMS to ${formattedPhone} for notification ${notificationId}`
       );
 
-      const response = await AT.SMS.send({
+      const response = await getSMS().send({
         to: [formattedPhone],
         message,
       });

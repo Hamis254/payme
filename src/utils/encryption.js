@@ -219,6 +219,36 @@ export const generateEncryptionKey = () => {
 };
 
 /**
+ * Deterministic one-way hash for lookup/uniqueness checks on encrypted fields.
+ *
+ * `encrypt()` uses a random IV each call, so the same plaintext produces a
+ * different ciphertext every time — that's correct for confidentiality, but
+ * it means you can't do `WHERE encrypted_column = ?` to check for duplicates
+ * or look a record up by its plaintext value.
+ *
+ * This function produces a deterministic HMAC-SHA256 digest of the plaintext
+ * (keyed with ENCRYPTION_KEY) that IS safe to store and index for uniqueness
+ * checks — same input always produces the same hash, but the hash can't be
+ * reversed to recover the plaintext. Store this alongside the encrypted
+ * value: encrypted column for display/decryption, hash column for lookups.
+ *
+ * Note: for low-entropy values (like national ID numbers, which follow a
+ * narrow numeric format), an attacker with database access could still
+ * attempt an offline dictionary/brute-force match against the hash. This is
+ * still far safer than plaintext storage, but it is not a substitute for
+ * restricting database access.
+ *
+ * @param {string} plaintext - Value to hash (e.g. an ID number)
+ * @returns {string} 64-character hex HMAC-SHA256 digest
+ */
+export const hashForLookup = plaintext => {
+  return crypto
+    .createHmac('sha256', ENCRYPTION_KEY)
+    .update(String(plaintext))
+    .digest('hex');
+};
+
+/**
  * Audit log encryption/decryption access
  * For compliance with KDPA 2019 data access tracking
  *
@@ -248,5 +278,6 @@ export default {
   decryptFields,
   isEncrypted,
   generateEncryptionKey,
+  hashForLookup,
   logEncryptionAccess,
 };

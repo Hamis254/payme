@@ -6,8 +6,11 @@ import { offlineQueueMiddleware } from '#middleware/offline.middleware.js';
 import {
   previewCart,
   processPayMe,
+  getSalesItemsHistory,
   getSalesHistory,
   getSaleDetails,
+  getDailySalesLedgerHandler,
+  getMpesaAttemptStatus,
 } from '#controllers/payme.controller.js';
 
 const router = express.Router();
@@ -35,11 +38,26 @@ router.post('/preview', previewCart);
 router.post(
   '/',
   offlineQueueMiddleware('sale'),
-  idempotencyMiddleware(),
+  idempotencyMiddleware({ requireIdempotencyKey: true }),
   requirePaymentConfig,
   processPayMe
 );
-router.post('/', idempotencyMiddleware(), requirePaymentConfig, processPayMe);
+
+/**
+ * GET /api/payme/mpesa/attempts/:id
+ * Poll an STK push. An M-Pesa checkout returns 202 with an attempt_id and
+ * NO sale — the sale only exists once the callback confirms payment, and
+ * this is how the client finds out. Declared before /sales/:id so the two
+ * path patterns can't shadow each other.
+ */
+router.get('/mpesa/attempts/:id', getMpesaAttemptStatus);
+
+/**
+ * GET /api/payme/sales/business/:businessId/items
+ * Sale line items for a business, one row per product per sale.
+ * Query: limit, offset (optional)
+ */
+router.get('/sales/business/:businessId/items', getSalesItemsHistory);
 
 /**
  * GET /api/payme/sales/business/:businessId
@@ -47,6 +65,13 @@ router.post('/', idempotencyMiddleware(), requirePaymentConfig, processPayMe);
  * Query: limit (optional)
  */
 router.get('/sales/business/:businessId', getSalesHistory);
+
+/**
+ * GET /api/payme/sales/business/:businessId/daily-ledger
+ * Daily sales ledger for a business over a date range.
+ * Query: startDate, endDate (optional)
+ */
+router.get('/sales/business/:businessId/daily-ledger', getDailySalesLedgerHandler);
 
 /**
  * GET /api/payme/sales/:id

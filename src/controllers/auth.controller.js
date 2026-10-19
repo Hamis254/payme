@@ -15,6 +15,21 @@
  * issueTokenPair() is the single place where both cookies are set.
  * Called from signup, signIn, and refresh — never duplicated.
  *
+ * MOBILE / FLUTTERFLOW SUPPORT  (added)
+ * ──────────────────────────────────────
+ * The original version only ever set httpOnly cookies. That works for a
+ * browser client, but a native mobile app (FlutterFlow, Flutter, React
+ * Native, etc.) cannot read an httpOnly cookie's value, so it has nothing
+ * to store and attach as an Authorization header.
+ *
+ * Fix: every endpoint below now ALSO returns access_token / refresh_token
+ * in the JSON body, in addition to setting the cookies. Web clients can
+ * keep using the cookies and ignore the body fields; mobile clients
+ * (FlutterFlow's Custom Authentication) store the body fields and send
+ * them back as `Authorization: Bearer <access_token>` on every request,
+ * and as `refresh_token` in the body (or `x-refresh-token` header) when
+ * calling /api/auth/refresh or /api/auth/sign-out.
+ *
  * @module controllers/auth
  * =============================================================================
  */
@@ -34,18 +49,19 @@ import { jwttoken } from '#utils/jwt.js';
 import { cookies } from '#utils/cookies.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// INTERNAL HELPER
+// INTERNAL HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Mint a fresh access + refresh token pair for a user and set both cookies.
- * Called identically from signup, signIn, and refresh.
+ * Mint a fresh access + refresh token pair for a user, set both cookies
+ * (for web clients), and return the raw tokens (for mobile clients that
+ * need them in the response body).
  *
  * @param {Object} res          - Express response object
  * @param {{ id: number, name: string, role: string }} user
  * @param {string|null} [deviceHint]  - from User-Agent (for session display)
  * @param {string|null} [familyId]    - provided on rotation only
- * @returns {Promise<void>}
+ * @returns {Promise<{ accessToken: string, refreshToken: string }>}
  */
 const issueTokenPair = async (res, user, deviceHint = null, familyId = null) => {
   // Access token — short-lived JWT (15 min)
@@ -64,6 +80,8 @@ const issueTokenPair = async (res, user, deviceHint = null, familyId = null) => 
 
   cookies.setAccessToken(res, accessToken);
   cookies.setRefreshToken(res, refreshToken);
+
+  return { accessToken, refreshToken };
 };
 
 /**
@@ -84,6 +102,21 @@ const extractDeviceHint = ua => {
   return ua.substring(0, 40);
 };
 
+/**
+ * Read the refresh token from wherever the client sent it.
+ * Web clients: httpOnly cookie (sent automatically).
+ * Mobile / FlutterFlow clients: JSON body field or a custom header,
+ * since they cannot rely on a cookie jar the way a browser does.
+ *
+ * @param {import('express').Request} req
+ * @returns {string|null}
+ */
+const getRefreshTokenFromRequest = req =>
+  req.cookies?.refresh_token ||
+  req.body?.refresh_token ||
+  req.headers['x-refresh-token'] ||
+  null;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SIGN UP
 // ─────────────────────────────────────────────────────────────────────────────
@@ -98,10 +131,22 @@ export const signup = async (req, res, next) => {
       });
     }
 
-    const { name, phone_number, password, role } = validationResult.data;
-    const user = await createUser({ name, phone_number, password, role });
+    const { name, id_number, phone_number, email, password, role } =
+      validationResult.data;
+    const user = await createUser({
+      name,
+      id_number,
+      phone_number,
+      email,
+      password,
+      role,
+    });
 
-    await issueTokenPair(res, user, extractDeviceHint(req.get('User-Agent')));
+    const { accessToken, refreshToken } = await issueTokenPair(
+      res,
+      user,
+      extractDeviceHint(req.get('User-Agent'))
+    );
 
     logger.info('User registered', { userId: user.id, name: user.name });
 
@@ -120,12 +165,20 @@ export const signup = async (req, res, next) => {
         email:        user.email,
         role:         user.role,
       },
+      // Mobile / FlutterFlow clients: store these and attach access_token
+      // as "Authorization: Bearer <access_token>" on every subsequent call.
+      access_token:  accessToken,
+      refresh_token: refreshToken,
+      token_type:    'Bearer',
+      expires_in:    900, // access token lifetime in seconds (15 min)
     });
   } catch (e) {
     if (e.message === 'User with this name already exists')
       return res.status(409).json({ error: 'Name already taken' });
     if (e.message === 'User with this phone number already exists')
       return res.status(409).json({ error: 'Phone number already registered' });
+    if (e.message === 'User with this ID number already exists')
+      return res.status(409).json({ error: 'ID number already registered' });
     logger.error('Signup error', { error: e.message });
     next(e);
   }
@@ -148,7 +201,11 @@ export const signIn = async (req, res, next) => {
     const { name, password } = validationResult.data;
     const user = await authenticateUser({ name, password });
 
-    await issueTokenPair(res, user, extractDeviceHint(req.get('User-Agent')));
+    const { accessToken, refreshToken } = await issueTokenPair(
+      res,
+      user,
+      extractDeviceHint(req.get('User-Agent'))
+    );
 
     logger.info('User signed in', { userId: user.id });
 
@@ -161,10 +218,19 @@ export const signIn = async (req, res, next) => {
         email:        user.email,
         role:         user.role,
       },
+      // Mobile / FlutterFlow clients: store these and attach access_token
+      // as "Authorization: Bearer <access_token>" on every subsequent call.
+      access_token:  accessToken,
+      refresh_token: refreshToken,
+      token_type:    'Bearer',
+      expires_in:    900, // access token lifetime in seconds (15 min)
     });
   } catch (e) {
     if (e.message === 'User not found' || e.message === 'Invalid password')
       return res.status(401).json({ error: 'Invalid credentials' });
+    if (e.message.includes('locked')) {
+      return res.status(429).json({ error: e.message, code: 'ACCOUNT_LOCKED' });
+    }
     logger.error('Sign-in error', { error: e.message });
     next(e);
   }
@@ -177,18 +243,22 @@ export const signIn = async (req, res, next) => {
 /**
  * POST /api/auth/refresh
  *
- * Client flow:
+ * Web client flow:
  *   1. Access token expires → middleware returns 401 { code: 'TOKEN_EXPIRED' }
  *   2. Client calls this endpoint (refresh_token cookie is sent automatically
  *      because path = /api/auth)
  *   3. Server rotates the refresh token and issues a fresh access token
  *   4. Client retries the original request with the new access token
  *
- * The client does NOT need to send any body — both tokens are in cookies.
+ * Mobile / FlutterFlow client flow:
+ *   Same as above, but since there's no cookie jar, the client sends the
+ *   refresh token back explicitly — either as { refresh_token } in the
+ *   JSON body, or as an `x-refresh-token` header — and reads the new
+ *   access_token / refresh_token pair from the JSON response body.
  */
 export const refresh = async (req, res, next) => {
   try {
-    const rawRefreshToken = req.cookies?.refresh_token;
+    const rawRefreshToken = getRefreshTokenFromRequest(req);
 
     if (!rawRefreshToken) {
       return res.status(401).json({
@@ -242,6 +312,11 @@ export const refresh = async (req, res, next) => {
 
     return res.status(200).json({
       message: 'Token refreshed successfully',
+      // Mobile / FlutterFlow clients: overwrite your stored tokens with these.
+      access_token:  newAccessToken,
+      refresh_token: newRawToken,
+      token_type:    'Bearer',
+      expires_in:    900,
     });
   } catch (e) {
     // rotateRefreshToken throws with descriptive messages for every failure case
@@ -273,7 +348,7 @@ export const refresh = async (req, res, next) => {
 
 export const signOut = async (req, res, next) => {
   try {
-    const rawRefreshToken = req.cookies?.refresh_token;
+    const rawRefreshToken = getRefreshTokenFromRequest(req);
 
     if (rawRefreshToken) {
       // Best-effort revocation — don't fail sign-out if DB call errors

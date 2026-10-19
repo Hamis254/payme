@@ -22,8 +22,21 @@ export const validateRequest = (schema, source = 'body') => {
         });
       }
 
-      // Replace the original data with parsed/validated data
-      req[source] = parsed.data;
+      // req.query is a getter-only accessor in Express 5 — it can't be
+      // reassigned with `req.query = ...`. Use defineProperty so the
+      // validated/coerced data still replaces it. body/params remain
+      // plain writable properties, so a direct assignment stays fine there.
+      if (source === 'query') {
+        Object.defineProperty(req, 'query', {
+          value: parsed.data,
+          writable: true,
+          configurable: true,
+          enumerable: true,
+        });
+      } else {
+        req[source] = parsed.data;
+      }
+
       next();
     } catch (error) {
       logger.error('Validation middleware error:', error);

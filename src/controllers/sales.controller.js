@@ -1,323 +1,54 @@
 import logger from '#config/logger.js';
 import { db } from '#config/database.js';
 import { eq, and, desc } from 'drizzle-orm';
-import { formatValidationError } from '#utils/format.js';
-import { initiateBusinessPayment } from '#utils/mpesa.js';
-import { getPaymentConfig } from '#services/paymentConfig.service.js';
-import {
-  payMpesaSchema,
-  mpesaCallbackSchema,
-} from '#validations/sales.validation.js';
+import { mpesaCallbackSchema } from '#validations/sales.validation.js';
 import { sales, saleItems } from '#models/sales.model.js';
 import { payments } from '#models/payments.model.js';
 import { wallets, walletTransactions } from '#models/myWallet.model.js';
 import { businesses } from '#models/setting.model.js';
-import { stockMovements } from '#models/stock.model.js';
-import { deductStockFIFO } from '#services/stock.service.js';
+import { checkAndNotifyLowStock } from '#services/stock.service.js';
 import { createRecord } from '#services/record.service.js';
+import { applyCallback } from '#services/mpesaAttempt.service.js';
+// emitNotification / notifications were already being called by
+// mpesaCallbackHandler without ever being imported — a ReferenceError that
+// would have fired on the first successful M-Pesa callback. It had not
+// surfaced because, as the audit found, no STK push has ever completed.
+import { emitNotification, notifications } from '#utils/notificationEmitter.js';
 
 /**
  * NOTE: createSaleHandler has been retired.
  * POST /api/payme/ is now the sole entry point for all sale creation.
- * This controller handles: cash confirmation, M-Pesa STK, M-Pesa callback,
- * sale queries, and cancellation only.
+ * This controller handles: the M-Pesa callback, sale queries, and
+ * cancellation only.
  */
 
-// ─────────────────────────────────────────────
-// PAY WITH CASH
-// POST /api/sales/:id/pay/cash
-// Only called if a sale was left in pending state and needs manual cash confirmation.
-// For normal PayMe cash sales this is handled directly in processPayMe.
-// ─────────────────────────────────────────────
-
-export const payCashHandler = async (req, res, next) => {
-  try {
-    if (!req.user) {
-      return res.status(401).json({ error: 'Authentication required' });
-    }
-
-    const saleId = Number(req.params.id);
-    if (Number.isNaN(saleId)) {
-      return res.status(400).json({ error: 'Invalid sale ID' });
-    }
-
-    let completedSale;
-    let completedItems;
-
-    await db.transaction(async tx => {
-      // Verify sale belongs to this user's business
-      const [row] = await tx
-        .select({ sale: sales, business: businesses })
-        .from(sales)
-        .innerJoin(businesses, eq(sales.business_id, businesses.id))
-        .where(and(eq(sales.id, saleId), eq(businesses.user_id, req.user.id)))
-        .limit(1);
-
-      if (!row) throw new Error('Sale not found or access denied');
-      if (row.sale.status !== 'pending') throw new Error('Sale is not pending');
-
-      const items = await tx
-        .select()
-        .from(saleItems)
-        .where(eq(saleItems.sale_id, saleId));
-
-      // Deduct stock using FIFO and backfill unit_cost + profit on saleItems
-      for (const item of items) {
-        const deduction = await deductStockFIFO(
-          item.product_id,
-          Number(item.quantity),
-          tx
-        );
-
-        const totalCost = deduction.deductions.reduce(
-          (sum, d) => sum + d.total_cost,
-          0
-        );
-        const unitCost =
-          Number(item.quantity) > 0 ? totalCost / Number(item.quantity) : 0;
-        const realProfit = Number(item.total_price) - totalCost;
-
-        // Update saleItem with real FIFO cost
-        await tx
-          .update(saleItems)
-          .set({
-            unit_cost: String(Number(unitCost.toFixed(4))),
-            profit: String(Number(realProfit.toFixed(2))),
-          })
-          .where(
-            and(
-              eq(saleItems.sale_id, saleId),
-              eq(saleItems.product_id, item.product_id)
-            )
-          );
-
-        // Log stock movements
-        for (const d of deduction.deductions) {
-          await tx.insert(stockMovements).values({
-            product_id: item.product_id,
-            batch_id: d.batch_id,
-            type: 'sale',
-            quantity_change: String(-d.quantity),
-            unit_cost: String(d.unit_cost),
-            reference_type: 'sale',
-            reference_id: saleId,
-            reason: `Cash sale #${saleId} - FIFO batch ${d.batch_id}`,
-            created_at: new Date(),
-          });
-        }
-      }
-
-      // Recalculate total profit from updated items
-      const updatedItems = await tx
-        .select()
-        .from(saleItems)
-        .where(eq(saleItems.sale_id, saleId));
-
-      const realTotalProfit = updatedItems.reduce(
-        (sum, i) => sum + Number(i.profit || 0),
-        0
-      );
-
-      // Mark sale completed
-      await tx
-        .update(sales)
-        .set({
-          status: 'completed',
-          payment_status: 'success',
-          amount_paid: row.sale.total_amount,
-          total_profit: String(Number(realTotalProfit.toFixed(2))),
-          updated_at: new Date(),
-        })
-        .where(eq(sales.id, saleId));
-
-      // Create payment record
-      await tx.insert(payments).values({
-        sale_id: saleId,
-        amount: row.sale.total_amount,
-        status: 'success',
-        created_at: new Date(),
-      });
-
-      // Fetch completed sale + items for ledger write (outside tx to get updated values)
-      completedSale = {
-        ...row.sale,
-        status: 'completed',
-        payment_mode: 'cash',
-      };
-      completedItems = updatedItems;
-    });
-
-    logger.info(`Cash payment completed for sale ${saleId}`);
-
-    // Write to financial ledger — token deducted here via createRecord()
-    try {
-      await createRecord({
-        business_id: completedSale.business_id,
-        user_id: req.user.id,
-        type: 'sales',
-        category: 'cash',
-        amount: Number(completedSale.total_amount),
-        payment_method: 'cash',
-        transaction_date: new Date(),
-        reference_id: String(saleId),
-        description: `Cash sale #${saleId}`,
-        items: completedItems.map(item => ({
-          item_name: item.product_name || `Product #${item.product_id}`,
-          quantity: Number(item.quantity),
-          unit_price: Number(item.unit_price),
-          product_id: item.product_id,
-          cost_per_unit: item.unit_cost ? Number(item.unit_cost) : null,
-        })),
-      });
-    } catch (recordError) {
-      // Non-fatal: sale succeeded, log for backfill
-      logger.error('Failed to write cash sale to ledger', {
-        sale_id: saleId,
-        error: recordError.message,
-      });
-    }
-
-    res.json({ message: 'Payment completed successfully', saleId });
-  } catch (e) {
-    logger.error('Error processing cash payment', e);
-    if (e.message === 'Sale not found or access denied') {
-      return res.status(404).json({ error: e.message });
-    }
-    if (e.message === 'Sale is not pending') {
-      return res.status(400).json({ error: e.message });
-    }
-    next(e);
-  }
-};
-
-// ─────────────────────────────────────────────
-// INITIATE M-PESA STK PUSH
-// POST /api/sales/:id/pay/mpesa
-// Called after a pending M-Pesa sale is created via PayMe
-// ─────────────────────────────────────────────
-
-export const payMpesaHandler = async (req, res, next) => {
-  try {
-    if (!req.user) {
-      return res.status(401).json({ error: 'Authentication required' });
-    }
-
-    const saleId = Number(req.params.id);
-    const validationResult = payMpesaSchema.safeParse({ saleId, ...req.body });
-
-    if (!validationResult.success) {
-      return res.status(400).json({
-        error: 'Validation failed',
-        details: formatValidationError(validationResult.error),
-      });
-    }
-
-    const { phone, description } = validationResult.data;
-
-    // Verify sale belongs to this user
-    const [row] = await db
-      .select({ sale: sales, business: businesses })
-      .from(sales)
-      .innerJoin(businesses, eq(sales.business_id, businesses.id))
-      .where(and(eq(sales.id, saleId), eq(businesses.user_id, req.user.id)))
-      .limit(1);
-
-    if (!row) {
-      return res.status(404).json({ error: 'Sale not found or access denied' });
-    }
-    if (row.sale.status !== 'pending') {
-      return res.status(400).json({ error: 'Sale is not pending' });
-    }
-
-    // Get business M-Pesa config
-    const paymentConfig = await getPaymentConfig(row.sale.business_id);
-
-    if (!paymentConfig) {
-      return res.status(400).json({
-        error: 'Payment configuration not found',
-        message: 'Please set up your M-Pesa till or paybill in Settings.',
-        setup_url: '/api/payment-config/fields?method=paybill',
-      });
-    }
-
-    if (!paymentConfig.is_active) {
-      return res.status(400).json({
-        error: 'Payment configuration is inactive',
-        message: 'Please activate your M-Pesa configuration in Settings.',
-      });
-    }
-
-    if (!paymentConfig.shortcode || !paymentConfig.passkey) {
-      return res.status(400).json({
-        error: 'Payment configuration is incomplete',
-        message: 'Please reconfigure your M-Pesa credentials in Settings.',
-      });
-    }
-
-    // Initiate STK push to customer's phone
-    let mpesaResp;
-    try {
-      mpesaResp = await initiateBusinessPayment({
-        paymentConfig,
-        phone,
-        amount: Number(row.sale.total_amount),
-        description: description || `PAYME Sale #${saleId}`,
-      });
-    } catch (mpesaError) {
-      logger.error('M-Pesa STK push failed', {
-        saleId,
-        error: mpesaError.message,
-      });
-      return res.status(500).json({
-        error: 'Failed to initiate M-Pesa payment',
-        message: mpesaError.message,
-      });
-    }
-
-    // Store payment initiation record
-    await db.insert(payments).values({
-      sale_id: saleId,
-      stk_request_id: mpesaResp.CheckoutRequestID || null,
-      phone,
-      amount: row.sale.total_amount,
-      status: 'initiated',
-      callback_payload: JSON.stringify(mpesaResp),
-      created_at: new Date(),
-    });
-
-    // Update sale with STK request ID
-    await db
-      .update(sales)
-      .set({
-        stk_request_id: mpesaResp.CheckoutRequestID || null,
-        payment_status: 'initiated',
-        updated_at: new Date(),
-      })
-      .where(eq(sales.id, saleId));
-
-    logger.info(`M-Pesa STK initiated for sale ${saleId}`, {
-      checkoutRequestId: mpesaResp.CheckoutRequestID,
-    });
-
-    res.json({
-      message: 'M-Pesa payment initiated. Customer will receive a prompt.',
-      saleId,
-      checkoutRequestId: mpesaResp.CheckoutRequestID,
-    });
-  } catch (e) {
-    logger.error('Error initiating M-Pesa payment', {
-      error: e.message,
-      saleId: req.params.id,
-    });
-    next(e);
-  }
-};
 
 // ─────────────────────────────────────────────
 // M-PESA CALLBACK HANDLER
 // POST /api/sales/mpesa/callback
-// Called by Safaricom after STK push — public endpoint
-// Returns 200 always to prevent Safaricom retries
+// Called by Safaricom after STK push — public endpoint.
+// Returns 200 always to prevent Safaricom retries.
+//
+// This is where an M-Pesa sale is BORN, not where it is updated. The push
+// itself only staged an attempt (mpesa_attempts) and held the stock; if the
+// customer cancels, the PIN times out, or the balance is short, this handler
+// releases the hold and writes nothing at all to `sales`. That is the whole
+// point of the restructure — a failed payment is not a sale, and must not
+// leave a row that looks like one.
+//
+// All the transactional work lives in mpesaAttempt.service.applyCallback(),
+// which locks the attempt row (SELECT … FOR UPDATE) so Safaricom's retries
+// are idempotent.
+//
+// createRecord() (token deduction + ledger entry) and the push notification
+// run AFTER that transaction commits, not inside it. Calling createRecord()
+// from inside meant it silently opened a SECOND, independent transaction
+// while the first one hadn't committed yet. The "non-fatal, don't undo the
+// sale" tolerance for a token failure here is intentional and correct
+// specifically for M-Pesa: by the time resultCode === 0 fires, the customer
+// has genuinely already paid, so refusing to record the sale would mean the
+// shop keeps the money while the app pretends it never happened — worse than
+// a billing gap.
 // ─────────────────────────────────────────────
 
 export const mpesaCallbackHandler = async (req, res) => {
@@ -340,6 +71,7 @@ export const mpesaCallbackHandler = async (req, res) => {
     const {
       CheckoutRequestID: checkoutRequestId,
       ResultCode: resultCode,
+      ResultDesc: resultDesc,
       CallbackMetadata,
     } = stkCallback;
 
@@ -353,257 +85,128 @@ export const mpesaCallbackHandler = async (req, res) => {
       resultCode,
     });
 
-    await db.transaction(async tx => {
-      // Find sale by STK request ID
-      const [sale] = await tx
-        .select()
-        .from(sales)
-        .where(eq(sales.stk_request_id, checkoutRequestId))
-        .limit(1);
+    const metaItems = CallbackMetadata?.Item || [];
+    const amount = metaItems.find(i => i.Name === 'Amount')?.Value ?? null;
+    const mpesaReceiptNumber =
+      metaItems.find(i => i.Name === 'MpesaReceiptNumber')?.Value || null;
+    const phoneNumber =
+      metaItems.find(i => i.Name === 'PhoneNumber')?.Value?.toString() || null;
 
-      if (!sale) {
-        logger.warn('No sale found for STK callback', {
-          callbackId,
-          checkoutRequestId,
-        });
-        return;
-      }
-
-      // Idempotency: skip if already processed
-      if (
-        sale.payment_status === 'success' ||
-        sale.payment_status === 'failed'
-      ) {
-        logger.info('Callback already processed — skipping', {
-          saleId: sale.id,
-          callbackId,
-        });
-        return;
-      }
-
-      // Parse callback metadata
-      const metaItems = CallbackMetadata?.Item || [];
-      const amount = Number(
-        metaItems.find(i => i.Name === 'Amount')?.Value || sale.total_amount
-      );
-      const mpesaReceiptNumber =
-        metaItems.find(i => i.Name === 'MpesaReceiptNumber')?.Value || null;
-      const phoneNumber =
-        metaItems.find(i => i.Name === 'PhoneNumber')?.Value?.toString() ||
-        null;
-
-      if (resultCode === 0) {
-        // ══════════════════════════════════════
-        // PAYMENT SUCCESSFUL
-        // ══════════════════════════════════════
-
-        // Fetch sale items for stock deduction + ledger
-        const saleItemsList = await tx
-          .select()
-          .from(saleItems)
-          .where(eq(saleItems.sale_id, sale.id));
-
-        // Deduct stock FIFO and backfill real unit_cost + profit on saleItems
-        for (const item of saleItemsList) {
-          const deduction = await deductStockFIFO(
-            item.product_id,
-            Number(item.quantity),
-            tx
-          );
-
-          const totalCost = deduction.deductions.reduce(
-            (sum, d) => sum + d.total_cost,
-            0
-          );
-          const unitCost =
-            Number(item.quantity) > 0 ? totalCost / Number(item.quantity) : 0;
-          const realProfit = Number(item.total_price) - totalCost;
-
-          // Backfill correct FIFO cost on saleItem row
-          await tx
-            .update(saleItems)
-            .set({
-              unit_cost: String(Number(unitCost.toFixed(4))),
-              profit: String(Number(realProfit.toFixed(2))),
-            })
-            .where(
-              and(
-                eq(saleItems.sale_id, sale.id),
-                eq(saleItems.product_id, item.product_id)
-              )
-            );
-
-          // Log stock movements
-          for (const d of deduction.deductions) {
-            await tx.insert(stockMovements).values({
-              product_id: item.product_id,
-              batch_id: d.batch_id,
-              type: 'sale',
-              quantity_change: String(-d.quantity),
-              unit_cost: String(d.unit_cost),
-              reference_type: 'sale',
-              reference_id: sale.id,
-              reason: `M-Pesa sale #${sale.id} - batch ${d.batch_id}`,
-              created_at: new Date(),
-            });
-          }
-        }
-
-        // Fetch updated items to recalculate total profit
-        const updatedItems = await tx
-          .select()
-          .from(saleItems)
-          .where(eq(saleItems.sale_id, sale.id));
-
-        const realTotalProfit = updatedItems.reduce(
-          (sum, i) => sum + Number(i.profit || 0),
-          0
-        );
-
-        // Mark sale completed
-        await tx
-          .update(sales)
-          .set({
-            status: 'completed',
-            payment_status: 'success',
-            mpesa_transaction_id: mpesaReceiptNumber,
-            mpesa_sender_phone: phoneNumber,
-            amount_paid: String(amount.toFixed(2)),
-            total_profit: String(Number(realTotalProfit.toFixed(2))),
-            updated_at: new Date(),
-          })
-          .where(eq(sales.id, sale.id));
-
-        // Update payment record
-        await tx
-          .update(payments)
-          .set({
-            status: 'success',
-            mpesa_transaction_id: mpesaReceiptNumber,
-            callback_payload: JSON.stringify(req.body),
-            updated_at: new Date(),
-          })
-          .where(eq(payments.stk_request_id, checkoutRequestId));
-
-        // Log charge event — balance was NOT pre-reserved
-        // createRecord() below handles the actual token deduction
-        await tx.insert(walletTransactions).values({
-          business_id: sale.business_id,
-          change_tokens: 0,
-          type: 'charge',
-          reference: String(sale.id),
-          note: `M-Pesa sale #${sale.id} completed — ${mpesaReceiptNumber}`,
-          created_at: new Date(),
-          created_by: null,
-        });
-
-        logger.info('M-Pesa sale finalized', {
-          saleId: sale.id,
-          receipt: mpesaReceiptNumber,
-          amount,
-          totalProfit: realTotalProfit,
-        });
-
-        // Write to financial ledger — token deducted here via createRecord()
-        try {
-          await createRecord({
-            business_id: sale.business_id,
-            user_id: null, // system-generated via callback
-            type: 'sales',
-            category: 'mpesa',
-            amount,
-            payment_method: 'mpesa',
-            transaction_date: new Date(),
-            reference_id: String(sale.id),
-            description: `M-Pesa sale #${sale.id}`,
-            mpesa_data: {
-              mpesaReceiptNumber,
-              phoneNumber,
-            },
-            items: updatedItems.map(item => ({
-              item_name: item.product_name || `Product #${item.product_id}`,
-              quantity: Number(item.quantity),
-              unit_price: Number(item.unit_price),
-              product_id: item.product_id,
-              cost_per_unit: item.unit_cost ? Number(item.unit_cost) : null,
-            })),
-          });
-        } catch (recordError) {
-          // Non-fatal — sale succeeded, record can be backfilled
-          logger.error('Failed to write M-Pesa sale to ledger', {
-            sale_id: sale.id,
-            error: recordError.message,
-          });
-        }
-      } else {
-        // ══════════════════════════════════════
-        // PAYMENT FAILED
-        // ══════════════════════════════════════
-        logger.warn('M-Pesa payment failed', {
-          saleId: sale.id,
-          resultCode,
-          callbackId,
-        });
-
-        await tx
-          .update(sales)
-          .set({
-            status: 'failed',
-            payment_status: 'failed',
-            updated_at: new Date(),
-          })
-          .where(eq(sales.id, sale.id));
-
-        await tx
-          .update(payments)
-          .set({
-            status: 'failed',
-            callback_payload: JSON.stringify(req.body),
-            updated_at: new Date(),
-          })
-          .where(eq(payments.stk_request_id, checkoutRequestId));
-
-        // Refund reserved token if one was reserved
-        if (sale.token_fee > 0) {
-          const [wallet] = await tx
-            .select()
-            .from(wallets)
-            .where(eq(wallets.business_id, sale.business_id))
-            .limit(1);
-
-          if (wallet) {
-            await tx.insert(walletTransactions).values({
-              business_id: sale.business_id,
-              change_tokens: sale.token_fee,
-              type: 'refund',
-              reference: String(sale.id),
-              note: `Payment failed (code: ${resultCode}) — token refunded`,
-              created_at: new Date(),
-              created_by: null,
-            });
-
-            await tx
-              .update(wallets)
-              .set({
-                balance_tokens: wallet.balance_tokens + sale.token_fee,
-                updated_at: new Date(),
-              })
-              .where(eq(wallets.id, wallet.id));
-          }
-        }
-
-        logger.info('Payment failed — token refunded', {
-          saleId: sale.id,
-          resultCode,
-        });
-      }
+    const result = await applyCallback({
+      checkoutRequestId,
+      resultCode,
+      resultDesc,
+      amount,
+      mpesaReceiptNumber,
+      phoneNumber,
+      rawPayload: req.body,
     });
+
+    if (result.outcome === 'no_attempt') {
+      // Logged at error level on purpose: if this fires with resultCode 0,
+      // a customer has paid for something we have no cart for, and it needs
+      // manual reconciliation. The most likely cause is the process dying
+      // between the STK push and attachCheckoutRequestId().
+      logger.error('M-Pesa callback for unknown attempt', {
+        callbackId,
+        checkoutRequestId,
+        resultCode,
+        payload: resultCode === 0 ? JSON.stringify(req.body) : undefined,
+      });
+      return res.status(200).json({ status: 'unknown_attempt', callbackId });
+    }
+
+    if (result.outcome === 'duplicate') {
+      logger.info('Callback already processed — skipping', {
+        callbackId,
+        attemptId: result.attemptId,
+        status: result.status,
+      });
+      return res.status(200).json({ status: 'already_processed', callbackId });
+    }
+
+    // ── Post-commit side effects (success only) ──────────────────
+    // Deliberately outside the transaction, and deliberately non-fatal:
+    // the money is already in the shop's account.
+    if (result.outcome === 'success') {
+      try {
+        await createRecord({
+          business_id: result.businessId,
+          user_id: result.userId ?? null,
+          type: 'sales',
+          category: 'mpesa',
+          amount: result.amount,
+          payment_method: 'mpesa',
+          transaction_date: new Date(),
+          reference_id: String(result.saleId),
+          description: `M-Pesa sale #${result.saleId}`,
+          mpesa_data: {
+            mpesaReceiptNumber: result.mpesaReceiptNumber,
+            phoneNumber: result.phoneNumber,
+          },
+          items: result.items.map(item => ({
+            item_name: item.product_name || `Product #${item.product_id}`,
+            quantity: Number(item.quantity),
+            unit_price: Number(item.unit_price),
+            product_id: item.product_id,
+            cost_per_unit: item.unit_cost ? Number(item.unit_cost) : null,
+          })),
+        });
+      } catch (recordError) {
+        logger.error('M-Pesa sale recorded but token/ledger entry failed', {
+          callbackId,
+          saleId: result.saleId,
+          error: recordError.message,
+        });
+      }
+
+      // Low-stock check per product — only meaningful now that stock has
+      // actually been deducted (the hold alone never moved it).
+      for (const item of result.items) {
+        try {
+          await checkAndNotifyLowStock(result.businessId, item.product_id);
+        } catch (lowStockError) {
+          logger.error('Low-stock check failed after M-Pesa sale', {
+            productId: item.product_id,
+            error: lowStockError.message,
+          });
+        }
+      }
+
+      try {
+        const [business] = await db
+          .select({ user_id: businesses.user_id })
+          .from(businesses)
+          .where(eq(businesses.id, result.businessId))
+          .limit(1);
+
+        if (business) {
+          await emitNotification({
+            user_id: business.user_id,
+            business_id: result.businessId,
+            ...notifications.paymentComplete({
+              amount: result.amount,
+              sale_id: result.saleId,
+              phone: result.phoneNumber,
+            }),
+          });
+        }
+      } catch (notifyError) {
+        logger.error('Failed to emit payment notification', {
+          callbackId,
+          saleId: result.saleId,
+          error: notifyError.message,
+        });
+      }
+    }
 
     // Always return 200 to Safaricom to prevent retries
     return res.status(200).json({
       message: 'Callback processed',
       callbackId,
       checkoutRequestId,
+      outcome: result.outcome,
+      ...(result.saleId ? { sale_id: result.saleId } : {}),
     });
   } catch (error) {
     logger.error('M-Pesa callback processing error', {

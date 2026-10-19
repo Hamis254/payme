@@ -25,6 +25,9 @@
     "db:studio": "drizzle-kit studio",
     "test": "jest"
   },
+  "jest": {
+    "maxWorkers": 2
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Hamis254/payme.git"
@@ -67,6 +70,7 @@
     "socket.io": "^4.8.3",
     "uuid": "^11.0.3",
     "winston": "^3.19.0",
+    "ws": "^8.18.0",
     "xss": "^1.0.15",
     "zod": "^4.3.5"
   },

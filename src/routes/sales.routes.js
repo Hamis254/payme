@@ -5,8 +5,6 @@ import { validateMpesaWebhook } from '#middleware/webhookSecurity.middleware.js'
 import {
   getSaleHandler,
   listSalesHandler,
-  payCashHandler,
-  payMpesaHandler,
   mpesaCallbackHandler,
   cancelSaleHandler,
 } from '#controllers/sales.controller.js';
@@ -17,10 +15,22 @@ const router = express.Router();
  * NOTE: POST / (createSaleHandler) has been retired.
  * All sale creation goes through POST /api/payme/
  *
+ * POST /:id/pay/cash and POST /:id/pay/mpesa have now been retired too.
+ * They were the second half of a two-step "create a sale, then pay it"
+ * flow whose first step (createSaleHandler) was removed in the same commit
+ * that wrote the note above — leaving two handlers that could only act on
+ * pending sales this router no longer had any way to create. Neither was
+ * ever called: no Flutter call sites, no internal callers, an empty
+ * offline queue, an empty payments table, and not one sale in the database
+ * carrying the amount_paid or stk_request_id they would have written.
+ *
+ * payCashHandler additionally set status='completed'/payment_status='success'
+ * without checking payment_mode, so calling it on a credit or hire purchase
+ * sale would have reported an outstanding debt as settled while the credit
+ * account still showed the balance owing.
+ *
  * This router handles:
  * - M-Pesa callback (public)
- * - Cash confirmation (auth)
- * - M-Pesa STK initiation (auth)
  * - Sale queries (auth)
  * - Sale cancellation (auth)
  */
@@ -45,12 +55,6 @@ router.get('/business/:businessId', listSalesHandler);
 
 // Get single sale with items + payment record
 router.get('/:id', getSaleHandler);
-
-// Confirm cash payment for a pending sale
-router.post('/:id/pay/cash', payCashHandler);
-
-// Initiate M-Pesa STK push for a pending sale
-router.post('/:id/pay/mpesa', payMpesaHandler);
 
 // Cancel a pending sale (refunds token)
 router.post('/:id/cancel', cancelSaleHandler);

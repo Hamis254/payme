@@ -19,6 +19,18 @@ export const products = pgTable('products', {
     .references(() => businesses.id, { onDelete: 'cascade' }),
   // Product name
   name: varchar('name', { length: 255 }).notNull(),
+  // Optional stock-keeping unit code — free text, only meaningful once a
+  // business has grown enough to want it. Not unique-constrained: two
+  // products both left blank must not collide.
+  sku: varchar('sku', { length: 100 }),
+  // Free-text unit of measure — "bundle", "kg", "crate", "piece", whatever
+  // matches how the owner actually talks about the item. Defaults to
+  // "pcs" so existing rows and quick-add flows don't need to specify one.
+  unit: varchar('unit', { length: 50 }).notNull().default('pcs'),
+  // Optional — only products that actually expire (perishables, some
+  // digital license-style goods) set this. Checked lazily on stock list
+  // fetch to auto-move expired quantity into spoiled_stock.
+  expiry_date: timestamp('expiry_date'),
   // Current quantity in stock
   current_quantity: decimal('current_quantity', {
     precision: 12,
@@ -26,6 +38,29 @@ export const products = pgTable('products', {
   })
     .notNull()
     .default('0'),
+  // Units physically on the shelf but already promised to an open hire
+  // purchase agreement — HP goods don't leave stock until the agreement is
+  // paid off, so they must not be sellable in the meantime.
+  // sellable = current_quantity − reserved_quantity.
+  //
+  // This lived on stockMovements by mistake (pasted under a comment that
+  // said "add to products table"). products.reserved_quantity was therefore
+  // undefined, which made drizzle throw on every analytics dashboard call
+  // and made stock.service.js's reservation writes silently no-op.
+  reserved_quantity: decimal('reserved_quantity', {
+    precision: 12,
+    scale: 3,
+  })
+    .notNull()
+    .default('0'),
+  // Per-product reorder point — defaults to 5 to match the existing
+  // hardcoded LOW_STOCK_FLOOR credit.service.js already assumes.
+  low_stock_threshold: decimal('low_stock_threshold', {
+    precision: 12,
+    scale: 3,
+  })
+    .notNull()
+    .default('5'),
   // Buying price per unit
   buying_price_per_unit: decimal('buying_price_per_unit', {
     precision: 12,

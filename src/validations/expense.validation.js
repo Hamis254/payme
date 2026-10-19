@@ -10,6 +10,11 @@ export const recordExpenseSchema = z.object({
     .number()
     .int()
     .positive('Business ID must be a positive integer'),
+  createdBy: z
+    .number()
+    .int()
+    .positive('createdBy is required')
+    .describe('User ID of whoever recorded this expense'),
   category: z
     .enum(EXPENSE_CATEGORIES)
     .describe('Expense category (use "n/a" if not applicable to business)'),

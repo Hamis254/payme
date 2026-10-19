@@ -1,0 +1,1 @@
+ALTER TABLE "hire_purchase_agreements" ADD COLUMN "estimated_cost" numeric(12, 2);

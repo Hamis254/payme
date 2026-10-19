@@ -138,6 +138,45 @@ export const syncOperation = async (queueId, serverResponse) => {
 };
 
 /**
+ * Add multiple queued operations in a single insert.
+ * Used when a device reconnects after being fully offline and pushes
+ * its entire local queue at once instead of one request per action.
+ */
+export const queueOfflineOperationsBatch = async (userId, businessId, operations, deviceId) => {
+  if (!Array.isArray(operations) || operations.length === 0) {
+    throw new Error('operations must be a non-empty array');
+  }
+
+  logger.info('Batch-queueing offline operations', {
+    userId,
+    businessId,
+    count: operations.length,
+  });
+
+  const rows = operations.map(op => ({
+    user_id:        userId,
+    business_id:    businessId,
+    operation_type: op.operationType,
+    operation_id:   op.operationId, // the localId generated on-device
+    endpoint:       op.endpoint,
+    method:         op.method,
+    request_body:   op.requestBody,
+    request_headers: op.requestHeaders ?? null,
+    status:         'pending',
+    executed_at:    op.executedAt ?? new Date(),
+    device_id:      deviceId,
+  }));
+
+  try {
+    const queued = await db.insert(offlineQueue).values(rows).returning();
+    return queued;
+  } catch (error) {
+    logger.error('Error batch-queueing offline operations', error);
+    throw error;
+  }
+};
+
+/**
  * Detect conflicts between local and server data
  * Returns conflict info if found, null otherwise
  */

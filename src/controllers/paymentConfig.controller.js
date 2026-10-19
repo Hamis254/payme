@@ -12,6 +12,7 @@ import { formatValidationError } from '#utils/format.js';
 import {
   setupPaymentConfigSchema,
   updatePaymentConfigSchema,
+  getPaymentConfigFields,
 } from '#validations/paymentConfig.validation.js';
 import {
   createPaymentConfig,
@@ -33,6 +34,41 @@ const assertBusinessOwnership = async (businessId, userId) => {
   }
 };
 
+// ============ FIELD GUIDANCE (for frontend form rendering) ============
+
+/**
+ * GET /api/payment-config/fields?method=paybill|till
+ *
+ * This was imported by paymentConfig.routes.js but never implemented —
+ * the underlying field-description logic already existed in
+ * getPaymentConfigFields() (paymentConfig.validation.js), it just had no
+ * controller wired up to it. This is that wiring.
+ *
+ * Returns which fields the frontend needs to collect for the given payment
+ * method, with labels/hints/required flags — lets a form like your
+ * FlutterFlow "Payment Setup" screen render the right fields without
+ * hardcoding them client-side.
+ */
+export const getPaymentConfigHandler = (req, res) => {
+  const rawMethod = req.query.method;
+
+  // Accept both 'till' (as documented in the route comment) and
+  // 'till_number' (the value actually stored/used elsewhere in the app).
+  const method = rawMethod === 'till' ? 'till_number' : rawMethod;
+
+  if (method !== 'paybill' && method !== 'till_number') {
+    return res.status(400).json({
+      error: 'Invalid or missing method',
+      message: "Query param 'method' must be 'paybill' or 'till'",
+    });
+  }
+
+  return res.status(200).json({
+    payment_method: method,
+    fields: getPaymentConfigFields(method),
+  });
+};
+
 // ============ SETUP PAYMENT CONFIGURATION (Post-signup) ============
 
 /**
@@ -42,12 +78,21 @@ const assertBusinessOwnership = async (businessId, userId) => {
  */
 export const setupPaymentMethod = async (req, res, next) => {
   try {
-    const { businessId } = req.body;
+    // Accept business_id (the convention used by every other field/endpoint
+    // in this API — payment_method, account_reference, etc. are all
+    // snake_case, and the DB column itself is business_id) while still
+    // accepting businessId in case any existing client already sends that.
+    // Previously this ONLY read req.body.businessId, so any client sending
+    // business_id (the consistent choice, matching the rest of the API)
+    // would silently fail this check and get a misleading "missing
+    // businessId or authentication" error even with a perfectly valid
+    // auth token — the real problem was the field name, not auth.
+    const businessId = req.body.business_id ?? req.body.businessId;
     const userId = req.user?.id;
 
     if (!businessId || !userId) {
       return res.status(400).json({
-        error: 'Missing businessId or authentication',
+        error: 'Missing business_id or authentication',
       });
     }
 
@@ -306,6 +351,11 @@ export const verifyPaymentConfigHandler = async (req, res, _next) => {
   try {
     const { configId } = req.params;
     const userId = req.user?.id;
+    // Optional: caller can supply the phone number to send the test STK
+    // push to. In production this should be the business owner's own
+    // number — required since there is no free way to test a live
+    // shortcode/passkey pair without prompting a real phone.
+    const { phone_number: testPhoneNumber } = req.body || {};
 
     if (!configId || !userId) {
       return res.status(400).json({ error: 'Missing required parameters' });
@@ -320,7 +370,7 @@ export const verifyPaymentConfigHandler = async (req, res, _next) => {
     await assertBusinessOwnership(config.business_id, userId);
 
     // Verify config with M-Pesa Daraja
-    await verifyPaymentConfig(parseInt(configId));
+    await verifyPaymentConfig(parseInt(configId), testPhoneNumber);
 
     logger.info('Payment config verified successfully', {
       configId,

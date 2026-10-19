@@ -53,6 +53,48 @@ const router = Router();
 // GET /api/offline/status
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { queueOfflineOperationsBatch } from '#services/offlineSync.service.js';
+// (add this to the existing import list from offlineSync.service.js)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/offline/queue/batch  — push the entire local offline queue at once
+// ─────────────────────────────────────────────────────────────────────────────
+router.post(
+  '/queue/batch',
+  authenticateToken,
+  validateBusinessId('body'),
+  async (req, res, next) => {
+    try {
+      const { operations } = req.body; // array of { operationType, operationId, endpoint, method, requestBody }
+
+      if (!Array.isArray(operations) || operations.length === 0) {
+        return res.status(400).json({ error: 'operations array required' });
+      }
+
+      const queued = await queueOfflineOperationsBatch(
+        req.user.id,
+        req.businessId,
+        operations,
+        req.headers['x-device-id']
+      );
+
+      // Immediately attempt to replay everything just queued, in the same
+      // request — the client gets real success/failure per item back at once
+      // instead of a second round trip to /api/offline/sync.
+      const syncResults = await runSyncCycle();
+
+      return res.status(201).json({
+        success: true,
+        queued: queued.map(q => ({ queueId: q.id, operationId: q.operation_id })),
+        syncResults,
+        message: `${queued.length} operations queued, sync cycle ran — ${syncResults.synced} synced, ${syncResults.failed} failed, ${syncResults.retrying} retrying`,
+      });
+    } catch (error) {
+      logger.error('Error batch-queueing and syncing operations', error);
+      next(error);
+    }
+  }
+);
 router.get(
   '/status',
   authenticateToken,

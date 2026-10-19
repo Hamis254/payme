@@ -13,7 +13,7 @@ const router = express.Router();
 /**
  * POST /api/wallet-payment/initiate
  * Initiate wallet payment via M-Pesa STK Push
- * Using paybill 650880 and account 37605544
+ * Using till 3485049 and account reference Onlinebuygoods
  * Body: { saleId, phone, amount }
  * Authentication: Required
  */

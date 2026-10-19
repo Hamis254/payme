@@ -16,6 +16,17 @@
  * attachUserIfPresent — soft auth for public-but-context-aware routes,
  *                       unchanged from original.
  *
+ * MOBILE / FLUTTERFLOW SUPPORT  (added)
+ * ──────────────────────────────────────
+ * The original version only ever read the token from req.cookies.token.
+ * That works for a browser client, but a native mobile app (FlutterFlow,
+ * Flutter, etc.) sends the access token as a normal
+ * "Authorization: Bearer <token>" header instead of a cookie.
+ *
+ * Fix: getAccessTokenFromRequest() now checks the cookie first (so nothing
+ * changes for existing web clients), then falls back to the Authorization
+ * header if no cookie is present.
+ *
  * @module middleware/auth
  * =============================================================================
  */
@@ -24,11 +35,34 @@ import logger from '#config/logger.js';
 import { jwttoken } from '#utils/jwt.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
+// getAccessTokenFromRequest
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Read the access token from wherever the client sent it.
+ * Web clients: httpOnly cookie (sent automatically).
+ * Mobile / FlutterFlow clients: `Authorization: Bearer <token>` header.
+ *
+ * @param {import('express').Request} req
+ * @returns {string|null}
+ */
+const getAccessTokenFromRequest = req => {
+  if (req.cookies?.token) return req.cookies.token;
+
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authHeader.slice(7).trim();
+  }
+
+  return null;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // authenticateToken
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const authenticateToken = (req, res, next) => {
-  const token = req.cookies?.token;
+  const token = getAccessTokenFromRequest(req);
 
   if (!token) {
     return res.status(401).json({
@@ -113,7 +147,7 @@ export const requireRole = allowedRoles => {
  * Never blocks the request — used for global context enrichment in app.js.
  */
 export const attachUserIfPresent = (req, _res, next) => {
-  const token = req.cookies?.token;
+  const token = getAccessTokenFromRequest(req);
   if (!token) return next();
 
   try {

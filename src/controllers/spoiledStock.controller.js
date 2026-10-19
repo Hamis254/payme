@@ -9,6 +9,7 @@
  */
 
 import logger from '#config/logger.js';
+import { startOfBusinessDay, endOfBusinessDay } from '#utils/businessDay.js';
 import { formatValidationError } from '#utils/format.js';
 import * as spoiledStockService from '#services/spoiledStock.service.js';
 import {
@@ -187,8 +188,8 @@ export const listSpoilageHandler = async (req, res, next) => {
       {
         productId,
         spoilageType,
-        startDate: startDate ? new Date(startDate) : null,
-        endDate: endDate ? new Date(endDate) : null,
+        startDate: startDate ? startOfBusinessDay(startDate) : null,
+        endDate: endDate ? endOfBusinessDay(endDate) : null,
         limit,
         offset,
       }

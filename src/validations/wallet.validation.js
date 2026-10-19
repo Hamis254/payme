@@ -20,24 +20,37 @@ const phoneSchema = z.preprocess(
 );
 
 // Token package options with their prices
+// 1 token = KSH 2 (retail)
 export const tokenPackages = {
   30: { tokens: 30, price: 50 },
   70: { tokens: 70, price: 100 },
   150: { tokens: 150, price: 200 },
   400: { tokens: 400, price: 500 },
-  850: { tokens: 850, price: 1000 },
+  800: { tokens: 800, price: 900 },
+  1000: { tokens: 1000, price: 1000 },
+  1500: { tokens: 1300, price: 1200 },
 };
 
-// Initiate token purchase (M-Pesa)
+const packageTypeEnum = z.enum(['30', '70', '150', '400', '800', '1000', '1200']);
+
+// Initiate token purchase (M-Pesa) — used by wallet.routes.js's body-based
+// POST /purchase, where businessId is NOT in the URL so it must be in the body.
 export const initiateTokenPurchaseSchema = z.object({
   businessId: z.number().int().positive(),
-  packageType: z.enum(['30', '70', '150', '400', '850']),
+  packageType: packageTypeEnum,
   phone: phoneSchema,
 });
 
-// Manual token addition (admin/cash payment)
+// Initiate token purchase for myWallet.routes.js's POST /:businessId/purchase-tokens
+// — businessId already comes from the URL param, so it must NOT be required here.
+export const initiateMyWalletTokenPurchaseSchema = z.object({
+  packageType: packageTypeEnum,
+  phone: phoneSchema,
+});
+
+// Manual token addition (admin/cash payment) — businessId comes from the
+// URL param on POST /:businessId/add-tokens, so it's not required in the body.
 export const addTokensManuallySchema = z.object({
-  businessId: z.number().int().positive(),
   tokens: z.number().int().positive(),
   note: z.string().max(500).optional(),
   paymentMethod: z.enum(['cash', 'bank_transfer', 'admin']).default('cash'),

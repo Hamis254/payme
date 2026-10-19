@@ -5,6 +5,7 @@ import {
   updateProductSchema,
   addStockSchema,
   recordAdjustmentSchema,
+  listProductsQuerySchema,
 } from '#validations/stock.validation.js';
 import {
   createProduct,
@@ -60,12 +61,24 @@ export const listProductsHandler = async (req, res, next) => {
       return res.status(400).json({ error: 'Invalid business id' });
     }
 
-    const products = await getProductsForBusiness(req.user.id, businessId);
+    const queryResult = listProductsQuerySchema.safeParse(req.query);
+    if (!queryResult.success) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: formatValidationError(queryResult.error),
+      });
+    }
+
+    const { products, pagination } = await getProductsForBusiness(
+      req.user.id,
+      businessId,
+      queryResult.data
+    );
 
     res.status(200).json({
       message: 'Products retrieved successfully',
       products,
-      count: products.length,
+      pagination,
     });
   } catch (e) {
     if (e.message === 'Business not found or access denied') {
@@ -224,7 +237,19 @@ export const getBusinessInventoryHandler = async (req, res, next) => {
       return res.status(400).json({ error: 'Invalid business id' });
     }
 
-    const result = await getFullInventoryForBusiness(req.user.id, businessId);
+    const queryResult = listProductsQuerySchema.safeParse(req.query);
+    if (!queryResult.success) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: formatValidationError(queryResult.error),
+      });
+    }
+
+    const result = await getFullInventoryForBusiness(
+      req.user.id,
+      businessId,
+      queryResult.data
+    );
 
     res.status(200).json({
       message: 'Business inventory retrieved successfully',

@@ -7,9 +7,10 @@ import {
   creditSales,
   creditPayments,
 } from '#models/credit.model.js';
-import { sales } from '#models/sales.model.js';
+import { sales, saleItems } from '#models/sales.model.js';
 import { businesses } from '#models/setting.model.js';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
+import { calculateCreditRepayment } from '#services/financialCalculations.js';
 import {
   createCreditAccountSchema,
   createCreditSaleSchema,
@@ -17,10 +18,14 @@ import {
 } from '#validations/credit.validation.js';
 import { formatValidationError } from '#utils/format.js';
 import logger from '#config/logger.js';
-import { AuthorizationError } from '#middleware/errorHandler.middleware.js';
+import {
+  AuthorizationError,
+  DatabaseError,
+} from '#middleware/errorHandler.middleware.js';
 import { catchAsync } from '#utils/catchAsync.js';
 import * as creditService from '#services/credit.service.js';
 import * as recordService from '#services/record.service.js';
+import { getCreditSalesForBusiness } from '#services/credit.service.js';
 
 async function assertBusinessOwnership(userId, businessId) {
   const [business] = await db
@@ -32,6 +37,138 @@ async function assertBusinessOwnership(userId, businessId) {
   if (!business) {
     throw new AuthorizationError('Business not found or access denied');
   }
+}
+
+const round2 = n => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+
+/**
+ * Resolve the receivable a credit repayment is being applied against, so
+ * calculateCreditRepayment() can run cost-recovery-first — exactly the
+ * basis higherPurchase.service.js hands calculateHPPayment():
+ *
+ *   totalSaleValue                  ← the debt originally opened
+ *   totalCost                       ← the real FIFO cost of those goods
+ *   amountReceivedBeforeThisPayment ← value − what's still outstanding
+ *
+ * Two scopes, because recordCreditPaymentSchema makes saleId optional:
+ *  - saleId given  → just that one credit sale.
+ *  - no saleId     → the account as a single running receivable. ALL of
+ *    the account's credit sales are included, settled ones too. That's
+ *    deliberate: the cost-recovery curve has to stay continuous across
+ *    the account's whole history, otherwise cost already recovered by
+ *    earlier payments would be charged for a second time.
+ *
+ * Cost basis is SUM(sale_items.unit_cost × quantity) — the same
+ * expression getStatementFinancials() uses for credit COGS, so the
+ * profit written here can never disagree with the statement's cost side.
+ *
+ * Outstanding comes from credit_sales.outstanding_amount, not
+ * credit_accounts.balance_due, so value and outstanding are derived from
+ * the same set of rows.
+ *
+ * MUST be called before the credit_sales / credit_accounts rows are
+ * updated for this payment — it reads the pre-payment outstanding.
+ *
+ * Throws rather than degrading to zero if the receivable can't be
+ * resolved. A zero here is indistinguishable from "this payment was
+ * genuinely all cost recovery", which is precisely the silent-wrong-
+ * number failure this whole change exists to remove. Failing the
+ * transaction rolls the payment back, so the operator retries against
+ * a fixed row instead of banking a fabricated profit figure.
+ */
+async function resolveCreditReceivableBasis(tx, accountId, saleId) {
+  const scoped = await tx
+    .select({
+      id: creditSales.id,
+      sale_id: creditSales.sale_id,
+      outstanding_amount: creditSales.outstanding_amount,
+    })
+    .from(creditSales)
+    .where(
+      saleId
+        ? and(
+          eq(creditSales.account_id, accountId),
+          eq(creditSales.sale_id, saleId)
+        )
+        : eq(creditSales.account_id, accountId)
+    );
+
+  if (scoped.length === 0) {
+    throw new DatabaseError(
+      `Cannot split credit payment: no credit_sales rows for account ${accountId}` +
+        `${saleId ? ` and sale ${saleId}` : ''}. Refusing to record a payment ` +
+        'with an unverifiable cost/profit split.'
+    );
+  }
+
+  // credit_sales.sale_id is nullable, and inArray() with a null in the
+  // list is not a query we can reason about — drop them and insist on
+  // what's left, rather than silently costing the nulls at zero.
+  const saleIds = [...new Set(scoped.map(cs => cs.sale_id).filter(Boolean))];
+
+  if (saleIds.length !== scoped.length) {
+    throw new DatabaseError(
+      `Cannot split credit payment: ${scoped.length - saleIds.length} of ` +
+        `${scoped.length} credit_sales rows for account ${accountId} have no ` +
+        'sale_id, so their cost basis is unknowable.'
+    );
+  }
+
+  const saleRows = await tx
+    .select({ id: sales.id, total_amount: sales.total_amount })
+    .from(sales)
+    .where(inArray(sales.id, saleIds));
+
+  if (saleRows.length !== saleIds.length) {
+    throw new DatabaseError(
+      `Cannot split credit payment: expected ${saleIds.length} sales rows for ` +
+        `account ${accountId}, found ${saleRows.length}. A missing sale would ` +
+        'understate the receivable and overstate profit.'
+    );
+  }
+
+  const itemRows = await tx
+    .select({
+      sale_id: saleItems.sale_id,
+      unit_cost: saleItems.unit_cost,
+      quantity: saleItems.quantity,
+    })
+    .from(saleItems)
+    .where(inArray(saleItems.sale_id, saleIds));
+
+  // No line items means no cost basis, which would price this payment as
+  // 100% profit — the original bug exactly. Every sale must contribute.
+  const salesWithItems = new Set(itemRows.map(i => i.sale_id));
+  const missingItems = saleIds.filter(id => !salesWithItems.has(id));
+  if (missingItems.length > 0) {
+    throw new DatabaseError(
+      `Cannot split credit payment: sales [${missingItems.join(', ')}] on ` +
+        `account ${accountId} have no sale_items, so there is no cost basis. ` +
+        'Refusing to record the payment as pure profit.'
+    );
+  }
+
+  const totalSaleValue = round2(
+    saleRows.reduce((sum, r) => sum + Number(r.total_amount), 0)
+  );
+  const totalCost = round2(
+    itemRows.reduce(
+      (sum, i) => sum + Number(i.unit_cost) * Number(i.quantity),
+      0
+    )
+  );
+  const outstandingNow = scoped.reduce(
+    (sum, cs) => sum + Number(cs.outstanding_amount),
+    0
+  );
+
+  return {
+    totalCost,
+    totalSaleValue,
+    amountReceivedBeforeThisPayment: round2(
+      Math.max(totalSaleValue - outstandingNow, 0)
+    ),
+  };
 }
 
 export async function createCreditAccount(req, res, next) {
@@ -127,7 +264,8 @@ export async function createCreditSale(req, res, next) {
       });
     }
 
-    const { saleId, accountId, dueDate, outstandingAmount } = parsed.data;
+    const { businessId, saleId, accountId, dueDate, outstandingAmount } =
+      parsed.data;
     let creditSaleId;
 
     await db.transaction(async tx => {
@@ -208,7 +346,7 @@ export async function createCreditSale(req, res, next) {
       // Create corresponding revenue record (deduct token) inside same transaction
       await recordService.createRecord(
         {
-          business_id: parsed.data.businessId,
+          business_id: businessId,
           user_id: req.user.id,
           type: 'credit',
           category: 'credit_sale',
@@ -264,6 +402,37 @@ export async function createCreditSale(req, res, next) {
   }
 }
 
+/**
+ * GET /api/credit/sales/business/:businessId
+ * Every credit sale for a business, with customer/phone/products/cost/due
+ * date already joined — feeds the Credit records table directly.
+ */
+export const getCreditSalesHistory = async (req, res, next) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const businessId = Number(req.params.businessId);
+    if (Number.isNaN(businessId) || businessId <= 0) {
+      return res.status(400).json({ error: 'Invalid business id' });
+    }
+
+    const result = await getCreditSalesForBusiness(req.user.id, businessId);
+
+    return res.status(200).json({
+      message: 'Credit sales retrieved successfully',
+      ...result,
+    });
+  } catch (e) {
+    if (e.message === 'Business not found or access denied') {
+      return res.status(403).json({ error: e.message });
+    }
+    logger.error('Error getting credit sales', e);
+    next(e);
+  }
+};
+
 export async function recordCreditPayment(req, res, next) {
   try {
     const parsed = recordCreditPaymentSchema.safeParse(req.body);
@@ -283,6 +452,9 @@ export async function recordCreditPayment(req, res, next) {
       reference,
     } = parsed.data;
 
+    let payment;
+    let newBalance;
+
     await db.transaction(async tx => {
       // Get account
       const [account] = await tx
@@ -299,8 +471,19 @@ export async function recordCreditPayment(req, res, next) {
         throw new Error('Payment amount exceeds balance due');
       }
 
+      // Split this payment into cost-recovery and profit BEFORE any of the
+      // credit_sales / credit_accounts rows below are touched — the basis
+      // depends on the pre-payment outstanding.
+      // Throws if the receivable can't be resolved — that aborts the
+      // transaction rather than writing a payment with a guessed split.
+      const basis = await resolveCreditReceivableBasis(tx, accountId, saleId);
+      const split = calculateCreditRepayment({
+        ...basis,
+        paymentAmount: Number(amount),
+      });
+
       // Record payment
-      const [payment] = await tx
+      [payment] = await tx
         .insert(creditPayments)
         .values({
           account_id: accountId,
@@ -309,12 +492,14 @@ export async function recordCreditPayment(req, res, next) {
           payment_method: paymentMethod,
           mpesa_transaction_id: mpesaTransactionId || null,
           reference: reference || null,
+          cost_recovered: String(split.cost_recovered_this_payment),
+          profit_realized: String(split.profit_realized_this_payment),
           created_at: new Date(),
         })
         .returning();
 
       // Update account balance
-      const newBalance = Number(account.balance_due) - Number(amount);
+      newBalance = Number(account.balance_due) - Number(amount);
       await tx
         .update(creditAccounts)
         .set({
@@ -361,15 +546,15 @@ export async function recordCreditPayment(req, res, next) {
         note: `Payment received - ${paymentMethod}${saleId ? ` for sale #${saleId}` : ''}`,
         created_at: new Date(),
       });
+    });
 
-      logger.info(
-        `Credit payment recorded: ${amount} for account #${accountId}`
-      );
-      res.status(201).json({
-        message: 'Payment recorded successfully',
-        payment,
-        newBalance,
-      });
+    logger.info(
+      `Credit payment recorded: ${amount} for account #${accountId}`
+    );
+    res.status(201).json({
+      message: 'Payment recorded successfully',
+      payment,
+      newBalance,
     });
   } catch (err) {
     logger.error('Error recording credit payment', err);
@@ -385,19 +570,18 @@ export async function recordCreditPayment(req, res, next) {
 
 // List all credit accounts for business
 export const getCreditAccounts = catchAsync(async (req, res) => {
-  const businessId = Number(req.query.businessId);
-  if (Number.isNaN(businessId)) {
+  const { businessId, status, search, page = 1, limit = 20 } = req.query;
+  if (!businessId) {
     return res
       .status(400)
       .json({ error: 'businessId query parameter is required' });
   }
-  const { status, search, page = 1, limit = 20 } = req.query;
   await assertBusinessOwnership(req.user.id, businessId);
 
   const accounts = await creditService.getCreditAccountsForBusiness(
     req.user.id,
     businessId,
-    { status, search, page: parseInt(page), limit: parseInt(limit) }
+    { status, search, page, limit }
   );
 
   res.json({
@@ -459,7 +643,7 @@ export const getCreditSales = catchAsync(async (req, res) => {
   const sales = await creditService.getCreditSalesForAccount(
     req.user.id,
     Number(accountId),
-    { status, startDate, endDate, page: parseInt(page), limit: parseInt(limit) }
+    { status, startDate, endDate, page, limit }
   );
 
   res.json({
@@ -491,7 +675,7 @@ export const getCreditPayments = catchAsync(async (req, res) => {
   const payments = await creditService.getCreditPaymentsForAccount(
     req.user.id,
     Number(accountId),
-    { startDate, endDate, page: parseInt(page), limit: parseInt(limit) }
+    { startDate, endDate, page, limit }
   );
 
   res.json({
@@ -508,7 +692,7 @@ export const getCreditLedger = catchAsync(async (req, res) => {
   const ledger = await creditService.getCreditLedgerForAccount(
     req.user.id,
     Number(accountId),
-    { startDate, endDate, page: parseInt(page), limit: parseInt(limit) }
+    { startDate, endDate, page, limit }
   );
 
   res.json({

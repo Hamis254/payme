@@ -10,7 +10,7 @@ import {
   getTokenPurchaseHistory,
 } from '#services/myWallet.service.js';
 import {
-  initiateTokenPurchaseSchema,
+  initiateMyWalletTokenPurchaseSchema,
   tokenPurchaseCallbackSchema,
   addTokensManuallySchema,
 } from '#validations/wallet.validation.js';
@@ -89,7 +89,7 @@ export const initiateTokenPurchaseHandler = async (req, res, next) => {
     }
 
     const { businessId } = req.params;
-    const validationResult = initiateTokenPurchaseSchema.safeParse(req.body);
+    const validationResult = initiateMyWalletTokenPurchaseSchema.safeParse(req.body);
 
     if (!validationResult.success) {
       return res.status(400).json({
@@ -98,10 +98,13 @@ export const initiateTokenPurchaseHandler = async (req, res, next) => {
       });
     }
 
+    const { packageType, phone } = validationResult.data;
+
     const result = await initiateTokenPurchase(
       req.user.id,
       businessId,
-      validationResult.data
+      packageType,
+      phone
     );
 
     res.status(201).json({
@@ -163,14 +166,13 @@ export const getTransactionsHandler = async (req, res, next) => {
     }
 
     const { businessId } = req.params;
-    const { limit = '50', offset = '0' } = req.query;
+    const { limit = '50', offset = '0', type } = req.query;
 
-    const transactions = await getWalletTransactions(
-      req.user.id,
-      businessId,
-      parseInt(limit),
-      parseInt(offset)
-    );
+    const transactions = await getWalletTransactions(req.user.id, businessId, {
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      ...(type ? { type } : {}),
+    });
 
     res.status(200).json({
       success: true,
@@ -196,14 +198,13 @@ export const getPurchaseHistoryHandler = async (req, res, next) => {
     }
 
     const { businessId } = req.params;
-    const { limit = '50', offset = '0' } = req.query;
+    const { limit = '50', offset = '0', status } = req.query;
 
-    const history = await getTokenPurchaseHistory(
-      req.user.id,
-      businessId,
-      parseInt(limit),
-      parseInt(offset)
-    );
+    const history = await getTokenPurchaseHistory(req.user.id, businessId, {
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      ...(status ? { status } : {}),
+    });
 
     res.status(200).json({
       success: true,
@@ -228,7 +229,6 @@ export const addTokensHandler = async (req, res, next) => {
       return res.status(401).json({ error: 'Authentication required' });
     }
 
-    // Check if user is admin
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Admin access required' });
     }
@@ -243,10 +243,14 @@ export const addTokensHandler = async (req, res, next) => {
       });
     }
 
+    const { tokens, note, paymentMethod } = validationResult.data;
+
     const result = await addTokensManually(
+      req.user.id,
       businessId,
-      validationResult.data,
-      req.user.id
+      tokens,
+      note,
+      paymentMethod
     );
 
     res.status(201).json({

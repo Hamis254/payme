@@ -4,10 +4,14 @@
     <meta charset="UTF-8" />
     <title>PayMe Financial Statement — {{business_name}}</title>
     <style>
-      /* ─── A4 PAGE SETUP ─── */
+      /* ─── A4 PAGE SETUP ───
+         Margins trimmed from 18/15/22/15mm -> 14/12/16/12mm to reclaim
+         page real estate for content. Bottom margin stays largest of the
+         four since the page-number footer still needs room to sit clear
+         of the last table row. */
       @page {
         size: A4 portrait;
-        margin: 18mm 15mm 22mm 15mm;
+        margin: 14mm 12mm 16mm 12mm;
         @bottom-center {
           content: 'Page ' counter(page) ' of ' counter(pages);
           font-size: 8pt;
@@ -22,54 +26,69 @@
         box-sizing: border-box;
       }
 
+      /* Flex column with a full-page minimum: this is what lets .doc-footer
+         claim the leftover vertical space via margin-top: auto and settle at
+         the foot of the page instead of floating directly under whatever
+         section happened to end last. */
       body {
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         font-size: 10pt;
-        line-height: 1.5;
+        line-height: 1.4;
         color: #1a1a1a;
         background: #fff;
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
       }
 
-      /* ─── WATERMARK STAMP ─── */
-      body::before {
-        content: 'VERIFIED BY PAYME';
+      /* The diagonal "VERIFIED BY PAYME" text watermark that used to live
+         here has been removed: the round stamp now sits dead centre, and
+         two overlapping marks in the same spot read as a printing error
+         rather than as authentication. The stamp carries the verification
+         code and date, so it says strictly more than the text ever did. */
+
+      /* ─── DIGITAL STAMP ───
+         Moved out of the top-right corner, where it sat on top of the Ref
+         and Generated lines, and into the middle of the page where a real
+         rubber stamp would land.
+
+         Styled as a pressed-ink impression rather than a solid badge: no
+         white fill (the paper and any text under it show through), thin
+         strokes, one flat ink colour, and a light rotation so it reads as
+         hand-applied. Opacity is low enough to sit over table rows without
+         competing with them — it is a watermark, not a label.
+
+         position: fixed keeps it on every printed page, so no page of the
+         statement can be passed off without it. */
+      .digital-stamp {
         position: fixed;
         top: 50%;
         left: 50%;
-        transform: translate(-50%, -50%) rotate(-35deg);
-        font-size: 72pt;
-        font-weight: 900;
-        color: rgba(5, 77, 50, 0.045);
-        letter-spacing: 4px;
-        white-space: nowrap;
+        margin: -63px 0 0 -63px; /* half of width/height, to truly centre */
+        width: 126px;
+        height: 126px;
+        z-index: 1;
+        transform: rotate(-14deg);
+        opacity: 0.16;
         pointer-events: none;
-        z-index: 0;
-      }
-
-      /* ─── DIGITAL CORNER STAMP ─── */
-      .digital-stamp {
-        position: absolute;
-        top: 0;
-        right: 0;
-        width: 110px;
-        height: 110px;
       }
 
       .stamp-outer {
-        width: 110px;
-        height: 110px;
-        border: 3px solid #054d32;
+        width: 126px;
+        height: 126px;
+        border: 3px solid #1e40af;
         border-radius: 50%;
         display: flex;
         align-items: center;
         justify-content: center;
         position: relative;
+        background: transparent;
       }
 
       .stamp-inner {
-        width: 88px;
-        height: 88px;
-        border: 1.5px dashed #054d32;
+        width: 104px;
+        height: 104px;
+        border: 1.5px solid #1e40af;
         border-radius: 50%;
         display: flex;
         flex-direction: column;
@@ -80,35 +99,55 @@
       }
 
       .stamp-top {
-        font-size: 6pt;
+        font-size: 7pt;
         font-weight: 800;
-        letter-spacing: 1.5px;
-        color: #054d32;
+        letter-spacing: 1.4px;
+        color: #1e40af;
         text-transform: uppercase;
+        line-height: 1.25;
       }
 
       .stamp-logo {
-        font-size: 13pt;
+        font-size: 15pt;
         font-weight: 900;
-        color: #054d32;
+        color: #1e40af;
         letter-spacing: 2px;
         margin: 2px 0;
+        line-height: 1;
+      }
+
+      .stamp-rule {
+        width: 62px;
+        border-top: 1px solid #1e40af;
+        margin: 3px 0;
+      }
+
+      .stamp-date {
+        font-size: 6pt;
+        font-weight: 700;
+        color: #1e40af;
+        margin-top: 1px;
       }
 
       .stamp-code {
-        font-size: 5pt;
+        font-size: 5.5pt;
         font-family: monospace;
-        color: #054d32;
-        word-break: break-all;
+        letter-spacing: 0.5px;
+        color: #1e40af;
         text-align: center;
+        margin-top: 1px;
       }
 
-      /* ─── HEADER LAYOUT ─── */
+      /* ─── HEADER LAYOUT ───
+         padding-bottom/margin-bottom trimmed (14px/16px -> 8px/8px) now
+         that the two header-top columns are closer in height, so there's
+         no leftover gap to compensate for and less reason for a large
+         buffer before the merchant box. */
       .header-wrap {
         position: relative;
         border-bottom: 3px solid #054d32;
-        padding-bottom: 14px;
-        margin-bottom: 16px;
+        padding-bottom: 8px;
+        margin-bottom: 8px;
       }
 
       .header-top {
@@ -122,6 +161,11 @@
         width: 55%;
       }
 
+      /* The stamp used to be pinned to this corner, so this cell reserved
+         52px of padding to keep it off the Ref / Generated / period text —
+         and still didn't fully clear it. The stamp now sits in the middle
+         of the page, so the reservation is gone and the header text has the
+         full column width back. */
       .header-top-right {
         display: table-cell;
         vertical-align: top;
@@ -129,50 +173,114 @@
         width: 45%;
       }
 
+      /* The real brand mark, inlined as a data URI by the service, replacing
+         the typographic "PAYME" badge that stood in for it.
+
+         mix-blend-mode: multiply is doing real work here: the asset is a JPEG
+         and so has an opaque off-white background baked in, which would
+         otherwise print as a visible pale square against the white header.
+         Multiply drops near-white to nothing and leaves the navy strokes.
+         A transparent PNG or an SVG would not need the trick. */
+      /* Logo mark + wordmark as a single lockup. The asset is symbol-only,
+         so the mark alone left the issuer's name off the top of the
+         document — it only reappeared in the stamp and footer bar. */
+      .payme-lockup {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 3px;
+      }
+
+      /* No mix-blend-mode needed any more — the asset is a transparent PNG,
+         so there is no background to knock out. */
+      .payme-logo-img {
+        height: 46px;
+        width: auto;
+        display: block;
+      }
+
+      /* #142C64 is sampled from the logo itself — the dominant ink colour of
+         the artwork — so the wordmark and the mark are the same navy rather
+         than two nearly-matching blues sitting next to each other. */
+      .payme-wordmark {
+        font-size: 20pt;
+        font-weight: 900;
+        letter-spacing: 2.5px;
+        color: #142c64;
+        line-height: 1;
+      }
+
       .payme-badge {
         display: inline-block;
         background: linear-gradient(135deg, #054d32 0%, #0a7a4e 100%);
         color: #fff;
-        padding: 6px 18px;
+        padding: 4px 14px;
         border-radius: 4px;
-        font-size: 18pt;
+        font-size: 16pt;
         font-weight: 900;
-        letter-spacing: 4px;
-        margin-bottom: 8px;
+        letter-spacing: 3px;
+        margin-bottom: 5px;
       }
 
       .payme-tagline {
-        font-size: 7.5pt;
+        font-size: 7pt;
         color: #666;
-        letter-spacing: 1px;
-        margin-bottom: 10px;
+        letter-spacing: 0.8px;
+        margin-bottom: 6px;
+      }
+
+      /* ─── BUSINESS LOGO ─── */
+      .business-logo-row {
+        display: table;
+        width: 100%;
+        margin-bottom: 4px;
+      }
+
+      .business-logo-cell {
+        display: table-cell;
+        vertical-align: middle;
+        width: 48px;
+        padding-right: 8px;
+      }
+
+      .business-logo-cell img {
+        max-height: 42px;
+        max-width: 48px;
+        object-fit: contain;
+        display: block;
+      }
+
+      .business-name-cell {
+        display: table-cell;
+        vertical-align: middle;
       }
 
       .business-name {
+        font-size: 13pt;
+        font-weight: 800;
+        color: #054d32;
+        margin-bottom: 2px;
+      }
+
+      /* Reduced from 15pt/1px letter-spacing + added nowrap: this,
+         combined with the trimmed padding-right above, is what keeps
+         "FINANCIAL STATEMENT" on a single line. Since the right column
+         is right-aligned text inside a table-cell (which doesn't clip
+         overflow), nowrap is a safe fallback even if a translation or
+         edge case briefly runs slightly wide — it'll never wrap. */
+      .statement-label {
         font-size: 14pt;
         font-weight: 800;
         color: #054d32;
-        margin-bottom: 3px;
-      }
-
-      .business-meta {
-        font-size: 8.5pt;
-        color: #555;
-        line-height: 1.7;
-      }
-
-      .statement-label {
-        font-size: 15pt;
-        font-weight: 800;
-        color: #054d32;
-        letter-spacing: 1px;
-        margin-bottom: 6px;
+        letter-spacing: 0.5px;
+        margin-bottom: 4px;
+        white-space: nowrap;
       }
 
       .statement-ref {
         font-size: 7.5pt;
         color: #777;
-        margin-bottom: 4px;
+        margin-bottom: 2px;
       }
 
       .statement-period-badge {
@@ -180,34 +288,43 @@
         background: #e8f5e9;
         border: 1px solid #054d32;
         border-radius: 3px;
-        padding: 4px 10px;
+        padding: 3px 8px;
         font-size: 8pt;
         font-weight: 700;
         color: #054d32;
-        margin-top: 6px;
+        margin-top: 4px;
       }
 
-      /* ─── MERCHANT INFO BOX ─── */
+      /* ─── MERCHANT INFO BOX ───
+         Was a rigid 50/50 split, which wrapped longer right-column
+         content (payment info, records count) onto an extra line. Now
+         42/58 — first-child/last-child instead of a shared width on the
+         base class — so the side with the longer text gets more room.
+         Padding and line-height also tightened to save vertical space. */
       .merchant-box {
         display: table;
         width: 100%;
         border: 1px solid #ddd;
         border-radius: 4px;
         background: #f9f9f9;
-        margin-bottom: 16px;
+        margin-bottom: 10px;
       }
 
       .merchant-col {
         display: table-cell;
         vertical-align: top;
-        padding: 10px 14px;
-        width: 50%;
-        font-size: 8.5pt;
-        line-height: 1.8;
+        padding: 7px 10px;
+        font-size: 8.3pt;
+        line-height: 1.55;
         border-right: 1px solid #e0e0e0;
       }
 
+      .merchant-col:first-child {
+        width: 42%;
+      }
+
       .merchant-col:last-child {
+        width: 58%;
         border-right: none;
       }
 
@@ -221,9 +338,9 @@
         font-weight: 800;
         letter-spacing: 1.5px;
         text-transform: uppercase;
-        padding: 6px 10px;
+        padding: 5px 8px;
         border-radius: 3px;
-        margin-bottom: 8px;
+        margin-bottom: 6px;
       }
 
       .section-title.green {
@@ -244,22 +361,28 @@
         border-left: 4px solid #333;
       }
 
-      /* ─── TABLES ─── */
+      /* ─── TABLES — EXCEL GRID STYLE ───
+         Every cell gets a real border on all sides, like a spreadsheet
+         grid. Header row keeps the brand green fill so it still reads
+         as PayMe, not a generic spreadsheet. Cell padding and the gap
+         between tables trimmed to fit more rows per page. */
       table {
         width: 100%;
         border-collapse: collapse;
         font-size: 9pt;
-        margin-bottom: 18px;
+        margin-bottom: 10px;
+        border: 1px solid #b7b7b7;
       }
 
       th {
         background: #054d32;
         color: #fff;
-        padding: 8px 9px;
+        padding: 5px 7px;
         text-align: left;
         font-size: 8pt;
         font-weight: 700;
         letter-spacing: 0.5px;
+        border: 1px solid #054d32;
       }
 
       th.right,
@@ -273,21 +396,22 @@
       }
 
       td {
-        padding: 7px 9px;
-        border-bottom: 1px solid #ebebeb;
+        padding: 4px 7px;
+        border: 1px solid #d9d9d9;
         vertical-align: top;
         color: #333;
+        background: #fff;
       }
 
       tr:nth-child(even) td {
-        background: #f9fcf9;
+        background: #f6f6f6;
       }
 
       tr.subtotal td {
         font-weight: 700;
-        background: #f2f2f2 !important;
-        border-top: 1.5px solid #ccc;
-        border-bottom: 1.5px solid #ccc;
+        background: #ececec !important;
+        border-top: 2px solid #999;
+        border-bottom: 2px solid #999;
       }
 
       tr.total-green td {
@@ -318,6 +442,41 @@
         font-size: 8pt;
       }
 
+      /* ─── LEDGER TABLE (Section 6) ───
+         This is the table most likely to run to many rows (the
+         unbounded transaction ledger), so its padding is the tightest
+         of all — every pixel saved here compounds across dozens/
+         hundreds of rows into real page savings. */
+      .ledger-table td,
+      .ledger-table th {
+        padding: 4px 6px;
+        font-size: 8.5pt;
+      }
+
+      .ledger-table td.mono {
+        font-size: 7.5pt;
+      }
+
+      /* Keeps "2 units" etc. on one line so the QTY column can't force a
+         wrap that inflates row height. */
+      .ledger-table td.qty-cell {
+        white-space: nowrap;
+      }
+
+      /* ─── EXCEL-STYLE AUTOFIT (Section 6) ───
+         The ledger's <th>s carry no width percentages, so the table's
+         default table-layout:auto sizes each column to its content. These
+         columns are all short, fixed-shape values (a date, a phone, an
+         amount), so nowrap pins them to exactly the width they need and
+         PRODUCT / ITEM — the only free-text column — takes the remainder.
+         width:1% is the standard trick that tells the auto layout to give
+         a column its minimum content width and nothing more. */
+      .ledger-table th.fit,
+      .ledger-table td.fit {
+        white-space: nowrap;
+        width: 1%;
+      }
+
       /* ─── PAGE BREAK ─── */
       .page-break {
         page-break-before: always;
@@ -325,6 +484,134 @@
 
       .no-break {
         page-break-inside: avoid;
+      }
+
+      /* ─── DOCUMENT FOOTER ───
+         body is a flex column with a full-page min-height, so margin-top:
+         auto on the footer pushes it to the foot of the page whenever the
+         content leaves room. break-inside: avoid keeps the security strip,
+         legal note and footer bar together — previously they could split
+         mid-block across a page boundary. */
+      .doc-footer {
+        margin-top: auto;
+        padding-top: 10px;
+        page-break-inside: avoid;
+        break-inside: avoid;
+      }
+
+      .security-strip {
+        border: 1.2px solid #054d32;
+        border-radius: 3px;
+        background: #f9fcf9;
+        padding: 7px 10px;
+      }
+
+      .security-title {
+        font-size: 8.5pt;
+        font-weight: 800;
+        letter-spacing: 0.8px;
+        color: #054d32;
+        text-transform: uppercase;
+        margin-bottom: 5px;
+      }
+
+      /* Shrink-to-fit QR cell: the old layout handed the QR a fixed 40%
+         column, and the ~120px of unused width beside it was the single
+         biggest source of dead space in the document. */
+      .security-row {
+        display: table;
+        width: 100%;
+      }
+
+      .security-main {
+        display: table-cell;
+        vertical-align: middle;
+        padding-right: 12px;
+      }
+
+      .security-qr {
+        display: table-cell;
+        vertical-align: middle;
+        text-align: center;
+        width: 1%;
+        white-space: nowrap;
+      }
+
+      .security-qr img {
+        width: 62px;
+        height: 62px;
+        border: 1px solid #ccc;
+        padding: 2px;
+        border-radius: 3px;
+        display: block;
+      }
+
+      .qr-caption {
+        font-size: 6pt;
+        font-weight: 700;
+        color: #888;
+        margin-top: 2px;
+        letter-spacing: 0.5px;
+      }
+
+      .sec-label {
+        font-size: 7pt;
+        font-weight: 800;
+        color: #444;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-right: 6px;
+      }
+
+      .sec-code {
+        font-size: 14pt;
+        font-weight: 900;
+        color: #054d32;
+        letter-spacing: 1.5px;
+      }
+
+      .sec-sha {
+        font-size: 6.5pt;
+        color: #555;
+        margin-top: 2px;
+        word-break: break-all;
+        line-height: 1.3;
+      }
+
+      .sec-sha .mono {
+        font-family: 'Courier New', monospace;
+        color: #333;
+      }
+
+      .sec-note {
+        font-size: 6.8pt;
+        color: #555;
+        margin-top: 3px;
+        line-height: 1.35;
+      }
+
+      .legal-note {
+        margin-top: 6px;
+        font-size: 6.3pt;
+        color: #666;
+        text-align: justify;
+        line-height: 1.35;
+        border-top: 1px solid #e0e0e0;
+        padding-top: 5px;
+      }
+
+      .footer-bar {
+        margin-top: 5px;
+        border-top: 1.5px solid #054d32;
+        padding-top: 4px;
+        text-align: center;
+        font-size: 6.5pt;
+        color: #555;
+      }
+
+      .footer-bar strong {
+        color: #054d32;
+        font-size: 7.5pt;
       }
     </style>
   </head>
@@ -334,9 +621,11 @@
       <div class="digital-stamp">
         <div class="stamp-outer">
           <div class="stamp-inner">
-            <div class="stamp-top">DIGITALLY</div>
+            <div class="stamp-top">Digitally</div>
             <div class="stamp-logo">PAYME</div>
-            <div class="stamp-top">VERIFIED</div>
+            <div class="stamp-top">Verified</div>
+            <div class="stamp-rule"></div>
+            <div class="stamp-date">{{generated_date}}</div>
             <div class="stamp-code">{{verification_code}}</div>
           </div>
         </div>
@@ -344,13 +633,28 @@
 
       <div class="header-top">
         <div class="header-top-left">
-          <div class="payme-badge">PAYME</div>
-          <div class="payme-tagline">BUSINESS FINANCIAL MANAGEMENT SYSTEM</div>
-          <div class="business-name">{{business_name}}</div>
-          <div class="business-meta">
-            {{location}}<br />
-            Tel: {{phone_number}} &nbsp;|&nbsp; {{email}}
+          {{#if payme_logo}}
+          <div class="payme-lockup">
+            <img src="{{payme_logo}}" alt="" class="payme-logo-img" />
+            <span class="payme-wordmark">PAYME</span>
           </div>
+          {{else}}
+          <div class="payme-badge">PAYME</div>
+          {{/if}}
+          <div class="payme-tagline">BUSINESS FINANCIAL MANAGEMENT SYSTEM</div>
+
+          {{#if logo_url}}
+          <div class="business-logo-row">
+            <div class="business-logo-cell">
+              <img src="{{logo_url}}" alt="{{business_name}} logo" />
+            </div>
+            <div class="business-name-cell">
+              <div class="business-name">{{business_name}}</div>
+            </div>
+          </div>
+          {{else}}
+          <div class="business-name">{{business_name}}</div>
+          {{/if}}
         </div>
         <div class="header-top-right">
           <div class="statement-label">FINANCIAL STATEMENT</div>
@@ -372,10 +676,11 @@
         <strong>ADDRESS:</strong> {{address}}
       </div>
       <div class="merchant-col">
-        <strong>PHONE:</strong> {{phone_number}}<br />
+        <strong>PAYMENT COLLECTION:</strong> {{payment_method_label}} {{payment_shortcode}} — Ref: {{payment_account_reference}}<br />
         <strong>EMAIL:</strong> {{email}}<br />
         <strong>STATEMENT PERIOD:</strong> {{start_date}} to {{end_date}}<br />
         <strong>RECORDS COUNT:</strong> {{record_count}} transactions
+        {{#if is_full_statement}}(full ledger included below){{else}}(summary only — no line-by-line ledger){{/if}}
       </div>
     </div>
   </body>

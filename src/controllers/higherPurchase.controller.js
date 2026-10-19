@@ -6,7 +6,6 @@ import { AuthorizationError } from '#middleware/errorHandler.middleware.js';
 import {
   createAgreement,
   getAgreementById,
-  listAgreements,
   recordInstallmentPayment,
   getOverdueInstallments,
   getUpcomingInstallments,
@@ -15,6 +14,7 @@ import {
   updateAgreementStatus,
   getPaymentHistory,
   getCollectionRate,
+  getHirePurchaseSalesForBusiness,
 } from '#services/higherPurchase.service.js';
 import {
   createHirePurchaseSchema,
@@ -137,12 +137,20 @@ export async function listAgreementsHandler(req, res, next) {
       });
     }
 
-    const agreements = await listAgreements(validationResult.data);
+    const payload = await getHirePurchaseSalesForBusiness(businessId, {
+      status: validationResult.data.status,
+      startDate: validationResult.data.startDate,
+      endDate: validationResult.data.endDate,
+      limit: validationResult.data.limit ?? 50,
+      offset: validationResult.data.offset ?? 0,
+    });
 
     return res.status(200).json({
       success: true,
-      count: agreements.length,
-      agreements,
+      count: payload.hire_purchase_sales.length,
+      agreements: payload.hire_purchase_sales,
+      hire_purchase_sales: payload.hire_purchase_sales,
+      summary: payload.summary,
     });
   } catch (e) {
     logger.error('Error listing agreements:', e);

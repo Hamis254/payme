@@ -1,0 +1,1 @@
+ALTER TABLE "businesses" ADD COLUMN "credit_risk_threshold_percent" numeric(5, 2) DEFAULT '70.00' NOT NULL;

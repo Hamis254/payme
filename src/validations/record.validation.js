@@ -119,14 +119,17 @@ export const createRecordSchema = z.union([
 
 /**
  * QUERY RECORDS SCHEMA
+ * Used by the existing GET /api/records/:business_id list endpoint — this is
+ * also what powers the on-screen zebra-striped table, filtered to a date
+ * range for the Statement page's live preview.
  */
 export const queryRecordsSchema = z.object({
   type: z.enum(['sales', 'hp', 'credit', 'inventory', 'expense']).optional(),
   payment_method: z.enum(['cash', 'mpesa']).optional(),
   start_date: z.coerce.date().optional(),
   end_date: z.coerce.date().optional(),
-  limit: z.number().positive().max(500).default(100),
-  offset: z.number().nonnegative().default(0),
+  limit: z.coerce.number().positive().max(500).default(100),
+  offset: z.coerce.number().nonnegative().default(0),
 });
 
 /**
@@ -146,13 +149,26 @@ export const dashboardInsightsSchema = z.object({
 
 /**
  * GENERATE STATEMENT SCHEMA
+ * Deliberately PDF-only — this endpoint has one job: produce the bank-grade
+ * PDF. 'statement_type' picks between the financial-summary-only document
+ * and the full document with the complete, unbounded transaction ledger.
+ * A cross-field check ensures end_date can't be set before start_date, with
+ * a message that names both dates so the caller can fix it in one pass.
  */
-export const generateStatementSchema = z.object({
-  business_id: z.number().positive(),
-  start_date: z.coerce.date(),
-  end_date: z.coerce.date().optional(),
-  format: z.enum(['pdf', 'csv', 'json']).default('pdf'),
-});
+export const generateStatementSchema = z
+  .object({
+    business_id: z.number().positive(),
+    start_date: z.coerce.date(),
+    end_date: z.coerce.date().optional(),
+    statement_type: z.enum(['summary', 'full']).default('full'),
+  })
+  .refine(
+    data => !data.end_date || data.end_date >= data.start_date,
+    data => ({
+      message: `end_date (${data.end_date?.toISOString().split('T')[0]}) cannot be before start_date (${data.start_date.toISOString().split('T')[0]}).`,
+      path: ['end_date'],
+    })
+  );
 
 export default {
   createRecordSchema,

@@ -459,6 +459,16 @@ export const updateSpoilageRecord = async (businessId, spoilageId, updates) => {
  * DELETE SPOILAGE RECORD
  * Remove spoilage record and restore stock if needed
  *
+ * The stock_movements row written when the spoilage was recorded is NOT
+ * deleted. It used to be, which quietly rewrote history: quantity_change
+ * for the write-off vanished while current_quantity went back up, so the
+ * movement log no longer explained how the product got to the quantity it
+ * was at, and a write-off that had already been reported on a statement
+ * could be made to disappear without trace. A reversal is a new event, not
+ * an un-happening of the old one — so the original stays and a
+ * compensating 'spoilage_reversal' movement is appended alongside it. The
+ * two sum to zero, which is exactly what the audit trail should show.
+ *
  * @param {number} businessId
  * @param {number} spoilageId
  */
@@ -500,17 +510,21 @@ export const deleteSpoilageRecord = async (businessId, spoilageId) => {
           updated_at: new Date(),
         })
         .where(eq(products.id, spoilage.product_id));
-    }
 
-    // Remove stock movement
-    await tx
-      .delete(stockMovements)
-      .where(
-        and(
-          eq(stockMovements.reference_type, 'spoilage'),
-          eq(stockMovements.reference_id, spoilageId)
-        )
-      );
+      // Append the reversal rather than erasing the original write-off.
+      // reference_id still points at the (now deleted) spoilage row so the
+      // pair can be matched up; reference_type marks it as the undo.
+      await tx.insert(stockMovements).values({
+        product_id: spoilage.product_id,
+        type: 'spoilage_reversal',
+        quantity_change: String(Number(spoilage.quantity_spoiled)),
+        unit_cost: spoilage.unit_cost ? String(spoilage.unit_cost) : null,
+        reference_type: 'spoilage_reversal',
+        reference_id: spoilageId,
+        reason: `Reversal of spoilage #${spoilageId} — record deleted, ${Number(spoilage.quantity_spoiled)} units restored`,
+        created_at: new Date(),
+      });
+    }
   });
 
   logger.info('Spoilage record deleted', {

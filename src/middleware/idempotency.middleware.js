@@ -313,7 +313,10 @@ export const cleanupExpiredIdempotencyKeys = async () => {
  * @returns {import('express').RequestHandler}
  */
 export const idempotencyMiddleware = (options = {}) => {
-  const { cacheDurationMs = DEFAULT_CACHE_DURATION_MS } = options;
+  const {
+    cacheDurationMs = DEFAULT_CACHE_DURATION_MS,
+    requireIdempotencyKey = true,
+  } = options;
 
   return async (req, res, next) => {
     // ── 1. Safe methods never need idempotency ────────────────────────────
@@ -323,8 +326,21 @@ export const idempotencyMiddleware = (options = {}) => {
 
     const idempotencyKey = req.get('Idempotency-Key');
 
-    // ── 2. No header — client opted out; proceed normally ─────────────────
+    // ── 2. No header — reject by default for mutations to prevent duplicate charges ─
     if (!idempotencyKey) {
+      if (requireIdempotencyKey) {
+        logger.warn('Rejected mutation without Idempotency-Key header', {
+          method: req.method,
+          path: req.path,
+          userId: req.user?.id,
+        });
+        return res.status(400).json({
+          error: 'Missing Idempotency-Key',
+          message:
+            'This operation requires a valid Idempotency-Key header to prevent duplicate processing.',
+        });
+      }
+
       logger.debug('Mutation without Idempotency-Key header', {
         method: req.method,
         path: req.path,

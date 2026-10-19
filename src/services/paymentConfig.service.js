@@ -1,6 +1,24 @@
 /**
  * Payment Configuration Service
  * Manages per-business M-Pesa payment method setup
+ *
+ * SECURITY FIX (added)
+ * ─────────────────────
+ * `passkey` is a Daraja credential — previously stored in plaintext even
+ * though the model comment claimed "encrypted at rest". It's now encrypted
+ * with the existing AES-256-GCM utility (#utils/encryption.js) before being
+ * written, and transparently decrypted whenever a config is read, so every
+ * other part of the app (mpesa.js, payme.controller.js) keeps working with
+ * the plaintext value exactly as before — nothing downstream needs to change.
+ *
+ * ENVIRONMENT FIX (added)
+ * ─────────────────────────
+ * `verifyPaymentConfig` previously always called sandbox.safaricom.co.ke
+ * and fetched its own OAuth token, regardless of MPESA_ENV. That meant
+ * verifying a real production till/paybill would always fail. It now
+ * reuses the same MPESA_BASE_URL switch and getAccessToken() helper as
+ * every other M-Pesa call in the app (#utils/mpesa.js), and accepts an
+ * optional test phone number instead of a hardcoded placeholder.
  */
 
 import logger from '#config/logger.js';
@@ -10,10 +28,46 @@ import { paymentConfigs } from '#models/paymentConfig.model.js';
 import { businesses } from '#models/setting.model.js';
 import axios from 'axios';
 import base64 from 'base-64';
+import { encrypt, decrypt, isEncrypted } from '#utils/encryption.js';
+import { MPESA_BASE_URL, getAccessToken } from '#utils/mpesa.js';
 
 const normalizePaymentMethod = method => {
   if (method === 'till') return 'till_number';
   return method;
+};
+
+/**
+ * Decrypt the passkey on a config row before returning it to callers.
+ * Safe to call on rows written before encryption was added — isEncrypted()
+ * detects the old plaintext rows and returns them unchanged instead of
+ * throwing, so nothing breaks for configs that predate this fix.
+ */
+const withDecryptedPasskey = config => {
+  if (!config) return config;
+  if (config.passkey && isEncrypted(config.passkey)) {
+    // Try the business-scoped AAD first (used when creating configs),
+    // then fall back to the per-config-id AAD for older rows.
+    const businessAAD = `payment_config.business_${config.business_id}.passkey`;
+    const configIdAAD = `payment_config.${config.id}.passkey`;
+
+    try {
+      return {
+        ...config,
+        passkey: decrypt(config.passkey, businessAAD),
+      };
+    } catch (e1) {
+      try {
+        return {
+          ...config,
+          passkey: decrypt(config.passkey, configIdAAD),
+        };
+      } catch (e2) {
+        // Re-throw the original error to preserve context
+        throw e1;
+      }
+    }
+  }
+  return config;
 };
 
 // ============ SETUP & CREATE PAYMENT CONFIG ============
@@ -28,7 +82,7 @@ const normalizePaymentMethod = method => {
  * @param {string} params.passkey - Daraja passkey
  * @param {string} params.accountReference - Account reference (max 12 chars)
  * @param {string} [params.accountName] - Optional account display name
- * @returns {Promise<Object>} Created payment config
+ * @returns {Promise<Object>} Created payment config (with plaintext passkey)
  */
 export const createPaymentConfig = async ({
   businessId,
@@ -63,14 +117,16 @@ export const createPaymentConfig = async ({
       );
     }
 
-    // Create new config
+    // Create new config — passkey encrypted at rest.
+    // AAD is bound to businessId so a row can't be decrypted if ever
+    // copied/moved to a different business record.
     const [config] = await db
       .insert(paymentConfigs)
       .values({
         business_id: businessId,
         payment_method: normalizePaymentMethod(paymentMethod),
         shortcode,
-        passkey,
+        passkey: encrypt(passkey, `payment_config.business_${businessId}.passkey`),
         account_reference: accountReference,
         account_name: accountName || null,
         verified: false,
@@ -86,7 +142,9 @@ export const createPaymentConfig = async ({
       method: paymentMethod,
     });
 
-    return config;
+    // Return with the plaintext passkey the caller just supplied — no need
+    // to decrypt what we already have in memory.
+    return { ...config, passkey };
   } catch (e) {
     logger.error('Error creating payment config', e);
     throw e;
@@ -98,7 +156,7 @@ export const createPaymentConfig = async ({
 /**
  * Get active payment config for a business
  * @param {number} businessId - Business ID
- * @returns {Promise<Object|null>} Payment config or null
+ * @returns {Promise<Object|null>} Payment config (passkey decrypted) or null
  */
 export const getPaymentConfig = async businessId => {
   try {
@@ -113,7 +171,7 @@ export const getPaymentConfig = async businessId => {
       )
       .limit(1);
 
-    return config || null;
+    return withDecryptedPasskey(config) || null;
   } catch (e) {
     logger.error('Error getting payment config', e);
     throw e;
@@ -123,7 +181,7 @@ export const getPaymentConfig = async businessId => {
 /**
  * Get payment config by ID (for admin/verification)
  * @param {number} configId - Config ID
- * @returns {Promise<Object|null>} Payment config
+ * @returns {Promise<Object|null>} Payment config (passkey decrypted)
  */
 export const getPaymentConfigById = async configId => {
   try {
@@ -133,7 +191,7 @@ export const getPaymentConfigById = async configId => {
       .where(eq(paymentConfigs.id, configId))
       .limit(1);
 
-    return config || null;
+    return withDecryptedPasskey(config) || null;
   } catch (e) {
     logger.error('Error fetching payment config by ID', e);
     throw e;
@@ -146,7 +204,7 @@ export const getPaymentConfigById = async configId => {
  * Update payment configuration for a business
  * @param {number} configId - Config ID
  * @param {Object} updates - Fields to update
- * @returns {Promise<Object>} Updated config
+ * @returns {Promise<Object>} Updated config (passkey decrypted)
  */
 export const updatePaymentConfig = async (configId, updates) => {
   try {
@@ -156,6 +214,26 @@ export const updatePaymentConfig = async (configId, updates) => {
         ? normalizePaymentMethod(updates.payment_method)
         : updates.payment_method,
     };
+
+    // Encrypt passkey if it's being updated — never write it in plaintext.
+    if (normalizedUpdates.passkey) {
+      // Fetch existing config to get the business_id so we can bind AAD
+      // to the business scope (same pattern used on create).
+      const [existing] = await db
+        .select()
+        .from(paymentConfigs)
+        .where(eq(paymentConfigs.id, configId))
+        .limit(1);
+
+      if (!existing) {
+        throw new Error('Payment config not found');
+      }
+
+      normalizedUpdates.passkey = encrypt(
+        normalizedUpdates.passkey,
+        `payment_config.business_${existing.business_id}.passkey`
+      );
+    }
 
     const [config] = await db
       .update(paymentConfigs)
@@ -171,14 +249,12 @@ export const updatePaymentConfig = async (configId, updates) => {
     }
 
     logger.info('Payment config updated', { configId });
-    return config;
+    return withDecryptedPasskey(config);
   } catch (e) {
     logger.error('Error updating payment config', e);
     throw e;
   }
 };
-
-// ============ VERIFY PAYMENT CONFIG ============
 
 // ============ TOGGLE PAYMENT CONFIG STATUS ============
 
@@ -223,11 +299,19 @@ export const deletePaymentConfig = async configId => {
 // ============ VERIFY PAYMENT CONFIG ============
 
 /**
- * Verify payment configuration by testing credentials with M-Pesa Daraja
+ * Verify payment configuration by testing credentials with M-Pesa Daraja.
+ *
  * @param {number} configId - Payment config ID
+ * @param {string} [testPhoneNumber] - Phone to send the test STK push to.
+ *   In sandbox, use Safaricom's shared test number (254708374149).
+ *   In production, this MUST be a real phone (e.g. the business owner's
+ *   own number) since production STK pushes go to real subscribers —
+ *   there is no "free" way to verify a live shortcode/passkey pair
+ *   without prompting an actual phone. If omitted, falls back to
+ *   MPESA_TEST_PHONE from env (sandbox use only).
  * @returns {Promise<boolean>} True if verified
  */
-export const verifyPaymentConfig = async configId => {
+export const verifyPaymentConfig = async (configId, testPhoneNumber = null) => {
   try {
     const config = await getPaymentConfigById(configId);
 
@@ -235,25 +319,20 @@ export const verifyPaymentConfig = async configId => {
       throw new Error('Configuration not found');
     }
 
-    // Get M-Pesa access token
-    const consumerKey = process.env.MPESA_CONSUMER_KEY;
-    const consumerSecret = process.env.MPESA_CONSUMER_SECRET;
+    const phoneForTest = testPhoneNumber || process.env.MPESA_TEST_PHONE;
 
-    if (!consumerKey || !consumerSecret) {
-      throw new Error('M-Pesa OAuth credentials not configured');
+    if (!phoneForTest) {
+      throw new Error(
+        'No test phone number provided. Pass testPhoneNumber, or set ' +
+          'MPESA_TEST_PHONE in .env for sandbox testing.'
+      );
     }
 
-    const auth = base64.encode(`${consumerKey}:${consumerSecret}`);
-
-    const tokenResponse = await axios.get(
-      'https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials',
-      {
-        headers: { Authorization: `Basic ${auth}` },
-        timeout: 10000,
-      }
-    );
-
-    const accessToken = tokenResponse.data.access_token;
+    // Reuses the same sandbox/production switch as every other M-Pesa call
+    // in the app — previously this always hit sandbox.safaricom.co.ke
+    // regardless of MPESA_ENV, so verifying real production credentials
+    // always failed.
+    const accessToken = await getAccessToken();
 
     // Build test password
     const timestamp = new Date()
@@ -264,26 +343,33 @@ export const verifyPaymentConfig = async configId => {
       `${config.shortcode}${config.passkey}${timestamp}`
     );
 
+    const isTill = config.payment_method === 'till_number';
+
+    // Same account-reference handling as initiateBusinessPayment in
+    // mpesa.js: paybill requires it, till falls back to the shortcode.
+    const accountRef = isTill
+      ? (config.account_reference || config.shortcode).substring(0, 12)
+      : config.account_reference;
+
     // Test STK Push with minimal amount
     const testPayload = {
       BusinessShortCode: config.shortcode,
       Password: password,
       Timestamp: timestamp,
-      TransactionType:
-        config.payment_method === 'till_number'
-          ? 'CustomerBuyGoodsOnline'
-          : 'CustomerPayBillOnline',
+      TransactionType: isTill
+        ? 'CustomerBuyGoodsOnline'
+        : 'CustomerPayBillOnline',
       Amount: 1, // Test with 1 KSH
-      PartyA: '254712345678', // Test phone
+      PartyA: phoneForTest,
       PartyB: config.shortcode,
-      PhoneNumber: '254712345678',
+      PhoneNumber: phoneForTest,
       CallBackURL: process.env.MPESA_CALLBACK_URL,
-      AccountReference: config.account_reference,
+      AccountReference: accountRef,
       TransactionDesc: 'CONFIG_VERIFICATION_TEST',
     };
 
     const response = await axios.post(
-      'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
+      `${MPESA_BASE_URL}/mpesa/stkpush/v1/processrequest`,
       testPayload,
       {
         headers: {
@@ -309,6 +395,7 @@ export const verifyPaymentConfig = async configId => {
       logger.info('Payment config verified successfully', {
         configId,
         method: config.payment_method,
+        env: process.env.MPESA_ENV || 'sandbox',
       });
       return true;
     } else {

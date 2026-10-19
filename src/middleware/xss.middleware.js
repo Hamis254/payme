@@ -117,17 +117,38 @@ export const deepSanitize = obj => {
  * Sanitizes all incoming request bodies to prevent XSS
  */
 export const bodyValidator = (req, res, next) => {
-  // Sanitize query parameters
+  // Sanitize query parameters. In this Express version req.query is a
+  // getter-only property computed from the URL — reassigning it directly
+  // (req.query = ...) throws "Cannot set property query of
+  // #<IncomingMessage> which has only a getter" on any request with query
+  // params. Mutating the object's contents in place avoids that specific
+  // crash, wrapped in try/catch as a hard guarantee this can never again
+  // take down an entire request with a 500 — worst case, query params
+  // just pass through unsanitized for that one request instead of
+  // crashing, with a warning logged.
   if (req.query && Object.keys(req.query).length > 0) {
-    req.query = deepSanitize(req.query);
+    try {
+      const sanitizedQuery = deepSanitize(req.query);
+      for (const key of Object.keys(req.query)) {
+        delete req.query[key];
+      }
+      Object.assign(req.query, sanitizedQuery);
+    } catch (err) {
+      logger.warn('Could not sanitize query params in place — skipping', {
+        error: err.message,
+        path: req.path,
+      });
+    }
   }
 
-  // Sanitize body parameters
+  // Sanitize body parameters. req.body is a plain writable object set
+  // fresh by body-parser on each request, so direct reassignment is safe.
   if (req.body && Object.keys(req.body).length > 0) {
     req.body = deepSanitize(req.body);
   }
 
-  // Sanitize URL parameters
+  // Sanitize URL parameters. req.params is likewise a plain writable
+  // object set fresh by the router per request — safe to reassign.
   if (req.params && Object.keys(req.params).length > 0) {
     req.params = deepSanitize(req.params);
   }

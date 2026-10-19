@@ -12,12 +12,12 @@ import { sales } from '#models/sales.model.js';
 /**
  * Wallet Payment Controller
  * Handles payment transactions using wallet credit for sales
- * Wallet uses fixed paybill: 650880 and account: 37605544
+ * Wallet uses fixed till number: 3485049 and account reference: Onlinebuygoods
  */
 
 // Wallet Configuration
-const WALLET_PAYBILL = '650880';
-const WALLET_ACCOUNT = '37605544';
+const WALLET_TILL_NUMBER = '3485049';
+const WALLET_ACCOUNT = 'Onlinebuygoods';
 
 /**
  * Initiate wallet payment via M-Pesa STK Push
@@ -89,7 +89,7 @@ export const initiateWalletPayment = async (req, res, next) => {
         amount_ksh: paymentAmount,
         phone,
         payment_status: 'pending',
-        paybill: WALLET_PAYBILL,
+        paybill: WALLET_TILL_NUMBER,
         account_reference: WALLET_ACCOUNT,
         created_at: new Date(),
       })
@@ -111,11 +111,11 @@ export const initiateWalletPayment = async (req, res, next) => {
         saleId,
         amount: paymentAmount,
         phone,
-        paybill: WALLET_PAYBILL,
+        paybill: WALLET_TILL_NUMBER,
         account: WALLET_ACCOUNT,
         paymentStatus: walletPayment.payment_status,
         createdAt: walletPayment.created_at,
-        instructions: `To complete payment, use M-Pesa paybill ${WALLET_PAYBILL} with account number ${WALLET_ACCOUNT}`,
+        instructions: `To complete payment, use M-Pesa till ${WALLET_TILL_NUMBER} with account reference ${WALLET_ACCOUNT}`,
       },
     });
   } catch (error) {

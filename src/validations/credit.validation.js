@@ -1,4 +1,3 @@
-// validations/credit.validations.js
 import { z } from 'zod';
 
 export const createCreditAccountSchema = z.object({
@@ -9,6 +8,7 @@ export const createCreditAccountSchema = z.object({
 });
 
 export const createCreditSaleSchema = z.object({
+  businessId: z.number().int().positive(),
   saleId: z.number().int().positive(),
   accountId: z.number().int().positive(),
   dueDate: z
@@ -34,11 +34,12 @@ export const updateCreditAccountSchema = z.object({
 });
 
 export const creditQuerySchema = z.object({
+  businessId: z.coerce.number().int().positive().optional(),
   status: z.enum(['active', 'suspended', 'inactive']).optional(),
   search: z.string().optional(),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
-  page: z.number().int().positive().or(z.string()).optional(),
-  limit: z.number().int().positive().or(z.string()).optional(),
+  page: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().positive().optional(),
   asOfDate: z.string().optional(),
 });

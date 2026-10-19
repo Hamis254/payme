@@ -15,6 +15,7 @@
  * - IP validation prevents impersonation
  */
 
+import crypto from 'node:crypto';
 import logger from '#config/logger.js';
 
 /**
@@ -118,45 +119,74 @@ const ipToNumber = ip => {
 
 /**
  * Validate M-Pesa callback signature
- * Ensures data integrity and authenticity
  *
- * Safaricom signs all callbacks using HMAC-SHA256
- * We verify the signature to ensure the callback is legitimate
+ * IMPORTANT — this returned the wrong answer in the one case that actually
+ * happens. Daraja's STK Push result callbacks do NOT carry an
+ * `X-M-Pesa-Signature` header; Safaricom authenticates the callback by
+ * calling a URL only the merchant knows, over TLS, from its own IP ranges.
+ * This function returned `false` on a missing header, and
+ * validateMpesaWebhook() treats `false` as fatal — so EVERY genuine
+ * callback was rejected with "Invalid signature" and the sale it was meant
+ * to confirm never got created. Confirmed live: a correctly-formed callback
+ * from a whitelisted Safaricom IP was refused.
+ *
+ * Worse, the check bought nothing in exchange: when a header WAS present it
+ * returned `true` without verifying anything (see the TODO below), so a
+ * spoofer only had to send any value at all. It rejected real traffic and
+ * admitted forged traffic.
+ *
+ * Behaviour now:
+ *   - no header            → unverifiable, not invalid → pass (this is the
+ *                            normal Daraja case; IP whitelist + TLS + the
+ *                            secret callback URL are what actually gate it)
+ *   - header + no secret   → pass, but warn: something is sending a
+ *                            signature we can't check
+ *   - header + secret set  → real HMAC-SHA256 comparison, timing-safe
+ *
+ * Set MPESA_CALLBACK_SECRET once Safaricom provides an HMAC secret and this
+ * becomes a genuine check with no further code change.
  *
  * @param {Object} req - Express request object
- * @returns {boolean} True if signature is valid
- *
- * @note The signature should be in the `X-M-Pesa-Signature` header
- * @todo Coordinate with Safaricom to implement signature verification
- *       Currently requires HMAC secret from Safaricom
+ * @returns {boolean} False only when a signature is present AND provably wrong
  */
 export const verifyMpesaSignature = req => {
-  // Extract signature from header
   const signature = req.get('X-M-Pesa-Signature');
+
   if (!signature) {
-    logger.debug(
-      'M-pesa callback has no signature header(expected in sandbox)'
-    );
-    return false;
+    // The normal case for Daraja STK callbacks. Absence of a signature is
+    // not evidence of forgery — see the note above.
+    logger.debug('M-Pesa callback has no signature header (expected)');
+    return true;
   }
 
-  // TODO: Implement signature verification
-  // Steps:
-  // 1. Get HMAC secret from Safaricom (provided during integration)
-  // 2. Compute HMAC-SHA256 of request body using secret
-  // 3. Compare with provided signature
-  //
-  // Example:
-  // const hmacSecret = process.env.MPESA_CALLBACK_SECRET;
-  // const bodyString = JSON.stringify(req.body);
-  // const computedSignature = crypto
-  //   .createHmac('sha256', hmacSecret)
-  //   .update(bodyString)
-  //   .digest('base64');
-  // return computedSignature === signature;
+  const hmacSecret = process.env.MPESA_CALLBACK_SECRET;
+  if (!hmacSecret) {
+    logger.warn(
+      'M-Pesa callback carried a signature but MPESA_CALLBACK_SECRET is unset — cannot verify'
+    );
+    return true;
+  }
 
-  logger.debug('M-Pesa signature validation (TODO: implement with Safaricom)');
-  return true; // TODO: Implement actual verification
+  try {
+    const computed = crypto
+      .createHmac('sha256', hmacSecret)
+      .update(JSON.stringify(req.body))
+      .digest('base64');
+
+    const provided = Buffer.from(signature);
+    const expected = Buffer.from(computed);
+
+    // Length check first: timingSafeEqual throws on a length mismatch.
+    const ok =
+      provided.length === expected.length &&
+      crypto.timingSafeEqual(provided, expected);
+
+    if (!ok) logger.error('M-Pesa callback signature mismatch');
+    return ok;
+  } catch (e) {
+    logger.error('M-Pesa signature verification failed', { error: e.message });
+    return false;
+  }
 };
 
 /**
@@ -184,7 +214,20 @@ export const isTimestampValid = (timestamp, maxAgeMs = 5 * 60 * 1000) => {
   const minute = parseInt(timestamp.substring(10, 12));
   const second = parseInt(timestamp.substring(12, 14));
 
-  const callbackTime = new Date(year, month - 1, day, hour, minute, second);
+  // Safaricom sends TransactionDate as an East Africa Time wall clock with
+  // no offset. This used to build it with `new Date(y, m, d, …)`, which
+  // interprets those digits in the SERVER's local timezone — correct only
+  // by accident when the server also runs in Nairobi. Deployed to a UTC
+  // host (the usual case), an EAT timestamp reads 3 hours in the future,
+  // `age` goes negative, and the guard below rejects every genuine callback
+  // as a replay attack. Pinning the offset makes the comparison an absolute
+  // one, so it behaves identically wherever this runs. EAT is UTC+3
+  // year-round — Kenya observes no DST — so a fixed offset is exact, not an
+  // approximation.
+  const EAT_OFFSET_MS = 3 * 60 * 60 * 1000;
+  const callbackTime = new Date(
+    Date.UTC(year, month - 1, day, hour, minute, second) - EAT_OFFSET_MS
+  );
   const now = new Date();
   const age = now.getTime() - callbackTime.getTime();
 

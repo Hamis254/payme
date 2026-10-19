@@ -1,37 +1,44 @@
 /**
  * =============================================================================
- * RECORD SERVICE: Core business logic for financial ledger
+ * SERVICE: RECORDS (manual ledger + statement aggregation)
  * =============================================================================
- * Handles CRUD operations for all record types (sales, HP, credit, inventory, expense)
- * Enforces Revenue Guard (token deduction), Google Sheets sync, and atomicity
- * @module services/record.service
- * @version 1.0.0
+ * `records` is the manual, token-metered ledger — one token per entry,
+ * created by hand via createRecord(). It is a DIFFERENT thing from the
+ * operational tables (sales, creditPayments, hirePurchaseInstallments)
+ * that credit.service.js / higherPurchase.service.js / sales.service.js
+ * write to automatically. getRecords() merges `records` with an
+ * auto-derived view of `sales` for the Records screen, but does NOT
+ * currently include credit repayments or HP installments recorded
+ * through the operational flow — flagged previously as a product
+ * decision to make later, not a bug fixed here.
+ *
+ * calculateTotals() and getDashboardInsights() no longer read from
+ * `records` at all — they were the fourth of four disagreeing profit
+ * calculators found in this codebase, and were computing totals from a
+ * mostly-empty-unless-manually-filled table instead of real sales data.
+ * Both now defer to getStatementFinancials() / getDailyTrend() /
+ * getMonthlyTrend() — the same source of truth as the dashboard and the
+ * downloadable statement.
+ *
+ * Google Sheets sync has been removed from createRecord() — no longer
+ * in use.
+ * =============================================================================
  */
 
-import { eq, and, gte, lte, desc } from 'drizzle-orm';
+import { eq, and, gte, lte, desc, sql } from 'drizzle-orm';
+import { startOfBusinessDay, endOfBusinessDay } from '#utils/businessDay.js';
 import { db } from '#config/database.js';
 import { records, record_items } from '#models/record.model.js';
 import { wallets } from '#models/myWallet.model.js';
-import { businesses } from '#models/setting.model.js';
+import { sales } from '#models/sales.model.js';
 import logger from '#config/logger.js';
-import { syncRecordToGoogleSheets } from '#services/googleSheets.service.js';
+import { mergeFinancialRecords, applyRecordFilters } from '#utils/recordAggregation.js';
+import { getStatementFinancials } from '#services/sales.service.js';
+import { getDailyTrend, getMonthlyTrend } from '#services/analytics.service.js';
 
 /**
  * CREATE RECORD: With atomic token deduction (Revenue Guard)
- * Ensures 1 token deduction and 1 record creation both succeed or both fail
- *
- * @param {Object} options - Record creation options
- * @param {number} options.business_id - Business owner
- * @param {number} options.user_id - User creating record
- * @param {string} options.type - Record type: sales, hp, credit, inventory, expense
- * @param {string} options.category - Category for filtering
- * @param {number} options.amount - Transaction amount
- * @param {Date} options.transaction_date - When transaction occurred
- * @param {Object} options.items - Line items (array of {item_name, quantity, unit_price})
- * @param {Object} [options.mpesa_data] - M-Pesa callback data
- * @param {string} [options.reference_id] - External reference for idempotency
- * @returns {Promise<Object>} Created record with items
- * @throws {Error} If token deduction fails or record creation fails
+ * Ensures 1 token deduction and 1 record creation both succeed or both fail.
  */
 export async function createRecord(
   {
@@ -52,27 +59,18 @@ export async function createRecord(
   trx = null
 ) {
   try {
-    // Validate input
     if (!['sales', 'hp', 'credit', 'inventory', 'expense'].includes(type)) {
       throw new Error(`Invalid record type: ${type}`);
     }
-
-    // Allow zero-amount records (token-only operations) — amount may be 0
     if (typeof amount !== 'number' || amount < 0) {
       throw new Error('Amount must be a non-negative number');
     }
 
-    // Check idempotency: prevent duplicate records
     if (reference_id) {
       const existing = await db
         .select()
         .from(records)
-        .where(
-          and(
-            eq(records.business_id, business_id),
-            eq(records.reference_id, reference_id)
-          )
-        )
+        .where(and(eq(records.business_id, business_id), eq(records.reference_id, reference_id)))
         .limit(1);
 
       if (existing.length > 0) {
@@ -81,15 +79,13 @@ export async function createRecord(
           reference_id,
           record_id: existing[0].id,
         });
-        return existing[0]; // Return existing record
+        return existing[0];
       }
     }
 
-    // If a transaction object is provided, run under it; otherwise start a new transaction
     const client = trx || db;
 
     const runCreate = async clientInstance => {
-      // 1. Check wallet balance
       const [wallet] = await clientInstance
         .select()
         .from(wallets)
@@ -97,21 +93,14 @@ export async function createRecord(
         .limit(1);
 
       if (!wallet || wallet.balance_tokens < 1) {
-        throw new Error(
-          'Insufficient tokens. Please purchase tokens to create records.'
-        );
+        throw new Error('Insufficient tokens. Please purchase tokens to create records.');
       }
 
-      // 2. Deduct 1 token from wallet (Revenue Guard)
       await clientInstance
         .update(wallets)
-        .set({
-          balance_tokens: wallet.balance_tokens - 1,
-          updated_at: new Date(),
-        })
+        .set({ balance_tokens: wallet.balance_tokens - 1, updated_at: new Date() })
         .where(eq(wallets.business_id, business_id));
 
-      // 3. Create record with token deduction metadata
       const [newRecord] = await clientInstance
         .insert(records)
         .values({
@@ -127,9 +116,7 @@ export async function createRecord(
           mpesa_receipt_number: mpesa_data?.mpesaReceiptNumber || null,
           mpesa_sender_name: mpesa_data?.phoneNumber || null,
           mpesa_sender_phone: mpesa_data?.phoneNumber || null,
-          mpesa_transaction_date: mpesa_data?.transactionDate
-            ? new Date(mpesa_data.transactionDate)
-            : null,
+          mpesa_transaction_date: mpesa_data?.transactionDate ? new Date(mpesa_data.transactionDate) : null,
           mpesa_transaction_id: mpesa_data?.transactionId || null,
           credit_due_date: credit_due_date ? new Date(credit_due_date) : null,
           credit_status: type === 'credit' ? 'pending' : null,
@@ -142,7 +129,6 @@ export async function createRecord(
         })
         .returning();
 
-      // 4. Create line items (if provided)
       if (items && items.length > 0) {
         await clientInstance.insert(record_items).values(
           items.map(item => ({
@@ -153,9 +139,7 @@ export async function createRecord(
             unit_price: String(item.unit_price),
             total_amount: String(item.quantity * item.unit_price),
             product_id: item.product_id || null,
-            cost_per_unit: item.cost_per_unit
-              ? String(item.cost_per_unit)
-              : null,
+            cost_per_unit: item.cost_per_unit ? String(item.cost_per_unit) : null,
             created_at: new Date(),
           }))
         );
@@ -166,62 +150,9 @@ export async function createRecord(
 
     let createdRecord;
     if (trx) {
-      // Running under caller's transaction
       createdRecord = await runCreate(client);
     } else {
       createdRecord = await db.transaction(async tx => await runCreate(tx));
-    }
-
-    // 5. Async: Sync to Google Sheets (non-blocking)
-    if (!trx) {
-      try {
-        // Fetch business to get spreadsheet ID
-        const [business] = await db
-          .select()
-          .from(businesses)
-          .where(eq(businesses.id, business_id))
-          .limit(1);
-
-        if (
-          business?.google_sheets_enabled &&
-          business?.google_sheets_spreadsheet_id
-        ) {
-          // Fetch created record with items for sync
-          const recordWithItems = await getRecordById(
-            business_id,
-            createdRecord.id
-          );
-          await syncRecordToGoogleSheets(
-            business_id,
-            business.google_sheets_spreadsheet_id,
-            recordWithItems
-          );
-
-          // Update sync status
-          await db
-            .update(records)
-            .set({
-              synced_to_sheets: true,
-              updated_at: new Date(),
-            })
-            .where(eq(records.id, createdRecord.id));
-        }
-      } catch (syncError) {
-        logger.error('Failed to sync record to Google Sheets', {
-          error: syncError.message,
-          record_id: createdRecord.id,
-          business_id,
-        });
-
-        // Update sync error but don't fail the request
-        await db
-          .update(records)
-          .set({
-            sheets_sync_error: syncError.message,
-            updated_at: new Date(),
-          })
-          .where(eq(records.id, createdRecord.id));
-      }
     }
 
     logger.info('Record created successfully', {
@@ -233,40 +164,26 @@ export async function createRecord(
 
     return createdRecord;
   } catch (error) {
-    logger.error('Record creation failed', {
-      error: error.message,
-      business_id,
-      type,
-    });
+    logger.error('Record creation failed', { error: error.message, business_id, type });
     throw error;
   }
 }
 
 /**
- * GET RECORD BY ID: Fetch single record with items
- *
- * @param {number} business_id - Business ID
- * @param {number} record_id - Record ID
- * @returns {Promise<Object>} Record with items
+ * GET RECORD BY ID — unchanged, no Google Sheets or money-calc involvement.
  */
 export async function getRecordById(business_id, record_id) {
   try {
     const [record] = await db
       .select()
       .from(records)
-      .where(
-        and(eq(records.id, record_id), eq(records.business_id, business_id))
-      );
+      .where(and(eq(records.id, record_id), eq(records.business_id, business_id)));
 
     if (!record) {
       throw new Error('Record not found');
     }
 
-    // Fetch items
-    const items = await db
-      .select()
-      .from(record_items)
-      .where(eq(record_items.record_id, record_id));
+    const items = await db.select().from(record_items).where(eq(record_items.record_id, record_id));
 
     return {
       ...record,
@@ -283,7 +200,8 @@ export async function getRecordById(business_id, record_id) {
 }
 
 /**
- * GET RECORDS: Fetch all records for business with filters
+ * GET RECORDS: Fetch all records for business with filters — merges the
+ * manual `records` mirror with an auto-derived view of `sales`.
  *
  * @param {number} business_id - Business ID
  * @param {Object} filters - Query filters
@@ -297,45 +215,61 @@ export async function getRecordById(business_id, record_id) {
  */
 export async function getRecords(
   business_id,
-  {
-    type = null,
-    payment_method = null,
-    start_date = null,
-    end_date = null,
-    limit = 100,
-    offset = 0,
-  } = {}
+  { type = null, payment_method = null, start_date = null, end_date = null, limit = 100, offset = 0 } = {}
 ) {
   try {
-    const conditions = [eq(records.business_id, business_id)];
+    const mirrorRecords = await db.select().from(records).where(eq(records.business_id, business_id));
 
-    // Apply filters
-    if (type) {
-      conditions.push(eq(records.type, type));
-    }
+    const operationalSales = await db
+      .select({
+        id: sales.id,
+        business_id: sales.business_id,
+        user_id: sql`NULL`,
+        type: sql`'sales'`,
+        category: sql`'retail'`,
+        description: sales.note,
+        amount: sales.total_amount,
+        quantity: sql`1`,
+        payment_method: sales.payment_mode,
+        mpesa_receipt_number: sales.mpesa_transaction_id,
+        mpesa_sender_name: sales.mpesa_sender_name,
+        mpesa_sender_phone: sales.mpesa_sender_phone,
+        mpesa_transaction_date: sales.created_at,
+        mpesa_transaction_id: sales.mpesa_transaction_id,
+        product_id: sql`NULL`,
+        stock_batch_id: sql`NULL`,
+        cost_per_unit: sql`NULL`,
+        credit_due_date: sql`NULL`,
+        credit_amount_paid: sql`NULL`,
+        credit_status: sql`NULL`,
+        token_deducted: sql`0`,
+        revenue_guard_reference: sql`NULL`,
+        callback_processed: sql`false`,
+        reference_id: sales.mpesa_transaction_id,
+        notes: sales.note,
+        transaction_date: sales.created_at,
+        created_at: sales.created_at,
+        updated_at: sales.updated_at,
+      })
+      .from(sales)
+      // status='completed' only. Without it this merged every sale row
+      // regardless of state, so an M-Pesa attempt that was never paid for —
+      // still 'pending', or already 'failed' — showed up in /api/records as
+      // if it were a real transaction. getStatementFinancials has always
+      // filtered this way; this query was the one place that didn't, which
+      // is why the records list and the statement could disagree.
+      .where(and(eq(sales.business_id, business_id), eq(sales.status, 'completed')));
 
-    if (payment_method) {
-      conditions.push(eq(records.payment_method, payment_method));
-    }
+    const merged = mergeFinancialRecords(mirrorRecords, operationalSales);
+    const filtered = applyRecordFilters(merged, { type, payment_method, start_date, end_date });
 
-    if (start_date) {
-      conditions.push(gte(records.transaction_date, new Date(start_date)));
-    }
-
-    if (end_date) {
-      conditions.push(lte(records.transaction_date, new Date(end_date)));
-    }
-
-    // Order by date descending and apply pagination
-    const result = await db
-      .select()
-      .from(records)
-      .where(and(...conditions))
-      .orderBy(desc(records.transaction_date))
-      .limit(limit)
-      .offset(offset);
-
-    return result;
+    return filtered
+      .sort((a, b) => {
+        const timeA = a.transaction_date ? a.transaction_date.getTime() : 0;
+        const timeB = b.transaction_date ? b.transaction_date.getTime() : 0;
+        return timeB - timeA;
+      })
+      .slice(offset, offset + limit);
   } catch (error) {
     logger.error('Failed to fetch records', {
       error: error.message,
@@ -347,19 +281,10 @@ export async function getRecords(
 }
 
 /**
- * GET RECORDS BY DATE RANGE: For statement generation
- * Fetches all records within 30-day rolling window
- *
- * @param {number} business_id - Business ID
- * @param {Date} start_date - Start of range
- * @param {Date} [end_date] - End of range (default: today)
- * @returns {Promise<Array>} All records in date range
+ * GET RECORDS BY DATE RANGE — unchanged. Still used directly wherever the
+ * raw manual ledger (not the full financial picture) is what's wanted.
  */
-export async function getRecordsByDateRange(
-  business_id,
-  start_date,
-  end_date = new Date()
-) {
+export async function getRecordsByDateRange(business_id, start_date, end_date = new Date()) {
   try {
     const result = await db
       .select()
@@ -367,8 +292,8 @@ export async function getRecordsByDateRange(
       .where(
         and(
           eq(records.business_id, business_id),
-          gte(records.transaction_date, new Date(start_date)),
-          lte(records.transaction_date, new Date(end_date))
+          gte(records.transaction_date, startOfBusinessDay(start_date)),
+          lte(records.transaction_date, endOfBusinessDay(end_date))
         )
       )
       .orderBy(desc(records.transaction_date));
@@ -386,12 +311,9 @@ export async function getRecordsByDateRange(
 }
 
 /**
- * CALCULATE TOTALS: Aggregate financial data for dashboard/statements
- *
- * @param {number} business_id - Business ID
- * @param {Date} [start_date] - Start date (default: 30 days ago)
- * @param {Date} [end_date] - End date (default: today)
- * @returns {Promise<Object>} Financial totals
+ * CALCULATE TOTALS: real financial totals, sourced from actual sales,
+ * credit repayments, and HP payments via getStatementFinancials() — not
+ * the manual `records` mirror the old version read from.
  */
 export async function calculateTotals(
   business_id,
@@ -399,102 +321,58 @@ export async function calculateTotals(
   end_date = new Date()
 ) {
   try {
-    const recordList = await getRecordsByDateRange(
-      business_id,
-      start_date,
-      end_date
-    );
+    const { totals } = await getStatementFinancials(business_id, start_date, end_date);
 
-    const totals = {
-      total_sales: 0,
-      cash_sales: 0,
-      mpesa_sales: 0,
-      higher_purchase: 0,
-      credit_given: 0,
-      credit_recovered: 0,
-      inventory_cost: 0,
-      expenses: 0,
-      net_profit: 0,
-      record_count: recordList.length,
-      transaction_count_by_date: {},
+    return {
+      // Real money
+      total_sales: parseFloat((totals.cash_sales + totals.mpesa_sales).toFixed(2)),
+      cash_sales: totals.cash_sales,
+      mpesa_sales: totals.mpesa_sales,
+      cash_collected: totals.cash_collected,
+      cash_in_hand: totals.cash_in_hand,
+
+      // Debts opened this period — full value, NOT collected, NOT revenue
+      credit_given: totals.credit_given_period,
+      higher_purchase_given: totals.hp_given_period,
+
+      // Real money collected against past debts this period
+      credit_recovered: totals.credit_repaid_period,
+      hp_collected: parseFloat((totals.hp_deposits_period + totals.hp_installments_period).toFixed(2)),
+
+      // Costs
+      total_cogs: totals.total_cogs,
+      expenses: parseFloat((totals.petty_expenses + totals.operating_expenses).toFixed(2)),
+      spoiled_stock_loss: totals.spoiled_total,
+
+      // Bottom line — cost-recovery-first, matches the statement exactly
+      realized_profit: totals.realized_profit,
+      net_profit: totals.net_profit_for_period,
+
+      // Outstanding, all-time
+      credit_outstanding: totals.credit_outstanding,
+      hp_outstanding: totals.hp_outstanding,
+      total_receivables: totals.total_receivables,
+
+      record_count:
+        totals.cash_count + totals.mpesa_count + totals.credit_sales_opened_count + totals.hp_agreements_opened_count,
     };
-
-    recordList.forEach(record => {
-      const amount = parseFloat(record.amount);
-
-      // By type
-      switch (record.type) {
-        case 'sales':
-          totals.total_sales += amount;
-          if (record.payment_method === 'cash') {
-            totals.cash_sales += amount;
-          } else if (record.payment_method === 'mpesa') {
-            totals.mpesa_sales += amount;
-          }
-          break;
-        case 'hp':
-          totals.higher_purchase += amount;
-          break;
-        case 'credit':
-          if (
-            record.credit_status === 'pending' ||
-            record.credit_status === 'partial'
-          ) {
-            totals.credit_given += amount;
-          } else {
-            totals.credit_recovered += amount;
-          }
-          break;
-        case 'inventory':
-          totals.inventory_cost += amount;
-          break;
-        case 'expense':
-          totals.expenses += amount;
-          break;
-      }
-
-      // By date
-      const dateKey = record.transaction_date.toISOString().split('T')[0];
-      totals.transaction_count_by_date[dateKey] =
-        (totals.transaction_count_by_date[dateKey] || 0) + 1;
-    });
-
-    // Calculate net profit
-    totals.net_profit =
-      totals.total_sales +
-      totals.higher_purchase +
-      totals.credit_recovered -
-      totals.inventory_cost -
-      totals.expenses;
-
-    return totals;
   } catch (error) {
-    logger.error('Failed to calculate totals', {
-      error: error.message,
-      business_id,
-    });
+    logger.error('Failed to calculate totals', { error: error.message, business_id });
     throw error;
   }
 }
 
 /**
- * PROCESS M-PESA CALLBACK: Mark record as processed (idempotency)
- *
- * @param {number} business_id - Business ID
- * @param {string} mpesa_transaction_id - M-Pesa transaction ID
- * @returns {Promise<Object>} Updated record
+ * PROCESS M-PESA CALLBACK: Mark record as processed (idempotency) —
+ * unchanged. Belongs to the manual ledger's own M-Pesa flow, separate
+ * from sales.service.js's operational M-Pesa callback handling.
  */
 export async function processM2PesaCallback(business_id, mpesa_transaction_id) {
   try {
     const [record] = await db
       .select()
       .from(records)
-      .where(
-        and(
-          eq(records.business_id, business_id),
-          eq(records.mpesa_transaction_id, mpesa_transaction_id)
-        )
-      )
+      .where(and(eq(records.business_id, business_id), eq(records.mpesa_transaction_id, mpesa_transaction_id)))
       .limit(1);
 
     if (!record) {
@@ -509,7 +387,6 @@ export async function processM2PesaCallback(business_id, mpesa_transaction_id) {
       return record;
     }
 
-    // Update record as processed
     const [updated] = await db
       .update(records)
       .set({
@@ -536,65 +413,58 @@ export async function processM2PesaCallback(business_id, mpesa_transaction_id) {
 }
 
 /**
- * DASHBOARD INSIGHTS: Calculate daily/weekly/monthly trends
- *
- * @param {number} business_id - Business ID
- * @param {string} period - 'daily', 'weekly', 'monthly'
- * @returns {Promise<Array>} Trend data
+ * DASHBOARD INSIGHTS: real daily/weekly/monthly trend, sourced from
+ * getDailyTrend / getMonthlyTrend (analytics.service.js).
  */
 export async function getDashboardInsights(business_id, period = 'daily') {
   try {
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const records_list = await getRecordsByDateRange(
-      business_id,
-      thirtyDaysAgo
-    );
+    if (period === 'monthly') {
+      const trend = await getMonthlyTrend(business_id, 12);
+      return trend.map(m => ({
+        period_key: m.month,
+        cash_collected: m.cash_collected,
+        net_profit: m.net_profit,
+        transaction_count: m.transaction_count,
+      }));
+    }
 
-    const grouped = {};
+    const daily = await getDailyTrend(business_id, 30);
 
-    records_list.forEach(record => {
-      let key;
-      const date = record.transaction_date;
+    if (period === 'daily') {
+      return daily.map(d => ({
+        period_key: d.date,
+        cash: d.cash_collected, // kept as `cash` for backward compatibility
+        net_profit: d.net_profit,
+        total: d.cash_collected,
+        transaction_count: d.transaction_count,
+      }));
+    }
 
-      if (period === 'daily') {
-        key = date.toISOString().split('T')[0]; // YYYY-MM-DD
-      } else if (period === 'weekly') {
-        const weekStart = new Date(date);
-        weekStart.setDate(date.getDate() - date.getDay());
-        key = weekStart.toISOString().split('T')[0];
-      } else if (period === 'monthly') {
-        key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`; // YYYY-MM
-      }
+    // weekly
+    const weeks = {};
+    daily.forEach(d => {
+      const date = new Date(d.date);
+      const weekStart = new Date(date);
+      weekStart.setDate(date.getDate() - date.getDay());
+      const key = weekStart.toISOString().split('T')[0];
 
-      if (!grouped[key]) {
-        grouped[key] = {
-          period_key: key,
-          cash: 0,
-          mpesa: 0,
-          total: 0,
-          transaction_count: 0,
-        };
-      }
-
-      const amount = parseFloat(record.amount);
-      grouped[key].total += amount;
-      grouped[key].transaction_count += 1;
-
-      if (record.payment_method === 'cash') {
-        grouped[key].cash += amount;
-      } else if (record.payment_method === 'mpesa') {
-        grouped[key].mpesa += amount;
-      }
+      weeks[key] ??= { period_key: key, cash: 0, net_profit: 0, total: 0, transaction_count: 0 };
+      weeks[key].cash += d.cash_collected;
+      weeks[key].net_profit += d.net_profit;
+      weeks[key].total += d.cash_collected;
+      weeks[key].transaction_count += d.transaction_count;
     });
 
-    return Object.values(grouped).sort(
-      (a, b) => new Date(a.period_key) - new Date(b.period_key)
-    );
+    return Object.values(weeks)
+      .map(w => ({
+        ...w,
+        cash: parseFloat(w.cash.toFixed(2)),
+        net_profit: parseFloat(w.net_profit.toFixed(2)),
+        total: parseFloat(w.total.toFixed(2)),
+      }))
+      .sort((a, b) => new Date(a.period_key) - new Date(b.period_key));
   } catch (error) {
-    logger.error('Failed to get dashboard insights', {
-      error: error.message,
-      business_id,
-    });
+    logger.error('Failed to get dashboard insights', { error: error.message, business_id });
     throw error;
   }
 }

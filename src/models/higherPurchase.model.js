@@ -43,6 +43,16 @@ export const hirePurchaseAgreements = pgTable('hire_purchase_agreements', {
     scale: 2,
   }).notNull(), // total - down_payment
 
+  // Catalog cost of the goods, snapshotted at signing. This is the cost
+  // basis every deposit/installment split is measured against, so it must
+  // be captured here — recomputing it later would drift as prices change.
+  //
+  // Deliberately nullable with NO default: a 0 here would silently mean
+  // "these goods cost nothing", which books every payment as pure profit —
+  // the exact bug this column exists to prevent. Callers must throw on a
+  // missing basis rather than degrade to zero.
+  estimated_cost: decimal('estimated_cost', { precision: 12, scale: 2 }),
+
   // Installment details
   installment_amount: decimal('installment_amount', {
     precision: 12,
@@ -110,4 +120,20 @@ export const hirePurchaseInstallments = pgTable('hire_purchase_installments', {
 
   created_at: timestamp('created_at').defaultNow().notNull(),
   updated_at: timestamp('updated_at').defaultNow(),
+});
+// ── add to src/models/higherPurchase.model.js ──
+export const hirePurchaseInstallmentPayments = pgTable('hire_purchase_installment_payments', {
+  id: serial('id').primaryKey(),
+  agreement_id: integer('agreement_id').notNull()
+    .references(() => hirePurchaseAgreements.id, { onDelete: 'cascade' }),
+  installment_id: integer('installment_id')
+    .references(() => hirePurchaseInstallments.id, { onDelete: 'set null' }), // null for the deposit
+  payment_type: varchar('payment_type', { length: 20 }).notNull(), // 'deposit' | 'installment'
+  amount: decimal('amount', { precision: 12, scale: 2 }).notNull(),
+  payment_method: varchar('payment_method', { length: 20 }),
+  mpesa_transaction_id: varchar('mpesa_transaction_id', { length: 128 }),
+  cost_recovered: decimal('cost_recovered', { precision: 12, scale: 2 }).notNull().default('0'),
+  profit_realized: decimal('profit_realized', { precision: 12, scale: 2 }).notNull().default('0'),
+  payment_date: timestamp('payment_date').notNull(),
+  created_at: timestamp('created_at').defaultNow().notNull(),
 });
