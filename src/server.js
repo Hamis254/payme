@@ -15,6 +15,10 @@ import {
   startAttemptSweeper,
   stopAttemptSweeper,
 } from '#services/mpesaAttempt.service.js';
+import {
+  startTokenLotScheduler,
+  stopTokenLotScheduler,
+} from '#services/tokenLotScheduler.js';
 
 const PORT = process.env.PORT || 3000;
 
@@ -36,6 +40,9 @@ server.listen(PORT, () => {
   // Releases stock held by STK pushes that never got a callback. Without
   // this, one dropped callback keeps a unit unsellable indefinitely.
   startAttemptSweeper();
+
+  // Expires trial tokens and sends the day-5 and expiry-day warnings.
+  startTokenLotScheduler();
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // GRACEFUL SHUTDOWN
@@ -50,6 +57,7 @@ const shutdown = async signal => {
   stopOfflineSyncJob();
   stopNotificationScheduler();
   stopAttemptSweeper();
+  stopTokenLotScheduler();
 
   server.close(async () => {
     try {

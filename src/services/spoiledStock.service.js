@@ -449,7 +449,12 @@ export const updateSpoilageRecord = async (businessId, spoilageId, updates) => {
       ...updates,
       updated_at: new Date(),
     })
-    .where(eq(spoiledStock.id, spoilageId))
+    .where(
+      and(
+        eq(spoiledStock.id, spoilageId),
+        eq(spoiledStock.business_id, businessId)
+      )
+    )
     .returning();
 
   return updated;
@@ -491,7 +496,14 @@ export const deleteSpoilageRecord = async (businessId, spoilageId) => {
   // Atomic transaction: delete spoilage and restore stock
   await db.transaction(async tx => {
     // Delete spoilage record
-    await tx.delete(spoiledStock).where(eq(spoiledStock.id, spoilageId));
+    await tx
+      .delete(spoiledStock)
+      .where(
+        and(
+          eq(spoiledStock.id, spoilageId),
+          eq(spoiledStock.business_id, businessId)
+        )
+      );
 
     // Restore stock quantity
     const [product] = await tx

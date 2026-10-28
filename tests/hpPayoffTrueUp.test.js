@@ -41,6 +41,7 @@ jest.mock('#services/stock.service.js', () => ({
   deductStockFIFO: jest.fn(),
   releaseStockReservation: jest.fn(),
 }));
+jest.mock('#services/record.service.js', () => ({ createRecord: jest.fn() }));
 
 import { db } from '#config/database.js';
 import { deductStockFIFO, releaseStockReservation } from '#services/stock.service.js';

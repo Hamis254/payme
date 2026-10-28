@@ -383,6 +383,27 @@ export const notificationService = {
 
   // ============ HELPER FUNCTIONS ============
 
+  // One-off SMS with no notifications row. Used for codes such as branch
+  // approval OTPs, where the message itself is the only record. Resolves to
+  // true only when the gateway accepts the message. Never logs the body.
+  async sendDirectSMS(phone, message) {
+    const formattedPhone = this._formatPhone(phone);
+    if (!formattedPhone) return false;
+
+    try {
+      const response = await getSMS().send({ to: [formattedPhone], message });
+      const result = response.data.SMSMessageData.Recipients[0];
+      if (result.statusCode !== 0) {
+        logger.warn(`Direct SMS rejected: ${result.statusMessage}`);
+        return false;
+      }
+      return true;
+    } catch (error) {
+      logger.error('Direct SMS failed', { error: error.message });
+      return false;
+    }
+  },
+
   _formatPhone(phone) {
     // Normalize to +254 format
     if (!phone) return null;
@@ -407,9 +428,13 @@ export const notificationService = {
       low_stock: prefs.stock_notifications,
       stock_expiring: prefs.stock_notifications,
       sale_created: prefs.sales_notifications,
+      hp_agreement_created: prefs.sales_notifications,
+      hp_installment_received: prefs.sales_notifications,
       wallet_low: prefs.wallet_notifications,
       wallet_purchased: prefs.wallet_notifications,
       credit_payment_due: prefs.credit_notifications,
+      credit_sale_created: prefs.credit_notifications,
+      credit_payment_received: prefs.credit_notifications,
       expense_recorded: prefs.expense_notifications,
       daily_summary: prefs.daily_summary,
     };

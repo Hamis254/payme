@@ -1,5 +1,8 @@
 import express from 'express';
 import { authenticateToken } from '#middleware/auth.middleware.js';
+import { validateBusinessId } from '#middleware/businessId.middleware.js';
+import { idempotencyMiddleware } from '#middleware/idempotency.middleware.js';
+import { revenueGuard } from '#middleware/revenueGuard.middleware.js';
 import {
   createAgreementHandler,
   getAgreementHandler,
@@ -48,7 +51,12 @@ const router = express.Router();
  *   "firstPaymentDate": "2026-02-28T00:00:00Z"
  * }
  */
-router.post('/:businessId/create', authenticateToken, createAgreementHandler);
+router.post(
+  '/:businessId/create',
+  authenticateToken,
+  validateBusinessId('params'),
+  createAgreementHandler
+);
 
 /**
  * GET /api/hire-purchase/:businessId/:agreementId
@@ -57,7 +65,12 @@ router.post('/:businessId/create', authenticateToken, createAgreementHandler);
  * @param agreementId - Agreement ID
  * @example GET /api/hire-purchase/5/1
  */
-router.get('/:businessId/overdue', authenticateToken, getOverdueHandler);
+router.get(
+  '/:businessId/overdue',
+  authenticateToken,
+  validateBusinessId('params'),
+  getOverdueHandler
+);
 
 /**
  * GET /api/hire-purchase/:businessId
@@ -72,7 +85,12 @@ router.get('/:businessId/overdue', authenticateToken, getOverdueHandler);
  * }
  * @example GET /api/hire-purchase/5?status=active&limit=20
  */
-router.get('/:businessId/upcoming', authenticateToken, getUpcomingHandler);
+router.get(
+  '/:businessId/upcoming',
+  authenticateToken,
+  validateBusinessId('params'),
+  getUpcomingHandler
+);
 
 /**
  * POST /api/hire-purchase/:businessId/:agreementId/payment
@@ -98,6 +116,9 @@ router.get('/:businessId/upcoming', authenticateToken, getUpcomingHandler);
 router.post(
   '/:businessId/:agreementId/payment',
   authenticateToken,
+  validateBusinessId('params'),
+  idempotencyMiddleware({ requireIdempotencyKey: true }),
+  revenueGuard,
   recordPaymentHandler
 );
 
@@ -113,7 +134,12 @@ router.post(
  *   overdue: [...]
  * }
  */
-router.get('/:businessId/summary', authenticateToken, getSummaryHandler);
+router.get(
+  '/:businessId/summary',
+  authenticateToken,
+  validateBusinessId('params'),
+  getSummaryHandler
+);
 
 /**
  * GET /api/hire-purchase/:businessId/upcoming
@@ -127,6 +153,7 @@ router.get('/:businessId/summary', authenticateToken, getSummaryHandler);
 router.get(
   '/:businessId/:agreementId/payment-history',
   authenticateToken,
+  validateBusinessId('params'),
   getPaymentHistoryHandler
 );
 
@@ -150,7 +177,12 @@ router.get(
  *   collection_rate: 76.0
  * }
  */
-router.get('/:businessId/:agreementId', authenticateToken, getAgreementHandler);
+router.get(
+  '/:businessId/:agreementId',
+  authenticateToken,
+  validateBusinessId('params'),
+  getAgreementHandler
+);
 
 /**
  * GET /api/hire-purchase/:businessId/:agreementId/payment-history
@@ -159,7 +191,12 @@ router.get('/:businessId/:agreementId', authenticateToken, getAgreementHandler);
  * @param agreementId - Agreement ID
  * @example GET /api/hire-purchase/5/1/payment-history
  */
-router.get('/:businessId', authenticateToken, listAgreementsHandler);
+router.get(
+  '/:businessId',
+  authenticateToken,
+  validateBusinessId('params'),
+  listAgreementsHandler
+);
 
 /**
  * PATCH /api/hire-purchase/:businessId/:agreementId/status
@@ -177,6 +214,7 @@ router.get('/:businessId', authenticateToken, listAgreementsHandler);
 router.patch(
   '/:businessId/:agreementId/status',
   authenticateToken,
+  validateBusinessId('params'),
   updateStatusHandler
 );
 

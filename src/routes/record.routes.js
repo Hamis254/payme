@@ -8,6 +8,7 @@
 
 import express from 'express';
 import { authenticateToken } from '#middleware/auth.middleware.js';
+import { validateBusinessId } from '#middleware/businessId.middleware.js';
 import { revenueGuard } from '#middleware/revenueGuard.middleware.js';
 import * as recordController from '#controllers/record.controller.js';
 
@@ -27,6 +28,7 @@ router.use(authenticateToken);
  */
 router.post(
   '/:business_id/create',
+  validateBusinessId('params', 'business_id'),
   revenueGuard,
   recordController.createRecord
 );
@@ -42,7 +44,11 @@ router.post(
  *   - limit: max 500 (default: 100)
  *   - offset: pagination (default: 0)
  */
-router.get('/:business_id', recordController.getRecords);
+router.get(
+  '/:business_id',
+  validateBusinessId('params', 'business_id'),
+  recordController.getRecords
+);
 
 /**
  * FINANCIAL TOTALS
@@ -57,7 +63,11 @@ router.get('/:business_id', recordController.getRecords);
  * otherwise Express matches "totals"/"insights"/"statement-preview" as a
  * record_id instead of routing to the intended handler.
  */
-router.get('/:business_id/totals', recordController.getTotals);
+router.get(
+  '/:business_id/totals',
+  validateBusinessId('params', 'business_id'),
+  recordController.getTotals
+);
 
 /**
  * DASHBOARD INSIGHTS
@@ -66,7 +76,11 @@ router.get('/:business_id/totals', recordController.getTotals);
  *   - period: daily, weekly, monthly (default: daily)
  * Returns: trend data for charts
  */
-router.get('/:business_id/insights', recordController.getDashboardInsights);
+router.get(
+  '/:business_id/insights',
+  validateBusinessId('params', 'business_id'),
+  recordController.getDashboardInsights
+);
 
 /**
  * STATEMENT PREVIEW DATA
@@ -78,6 +92,7 @@ router.get('/:business_id/insights', recordController.getDashboardInsights);
  */
 router.get(
   '/:business_id/statement-preview',
+  validateBusinessId('params', 'business_id'),
   recordController.getStatementFinancialsPreview
 );
 
@@ -93,6 +108,7 @@ router.get(
  */
 router.post(
   '/:business_id/generate-statement',
+  validateBusinessId('params', 'business_id'),
   recordController.generateStatement
 );
 
@@ -105,6 +121,10 @@ router.post(
  * since ':record_id' will otherwise greedily match any literal path segment
  * (e.g. "totals", "insights", "statement-preview") that was declared after it.
  */
-router.get('/:business_id/:record_id', recordController.getRecordById);
+router.get(
+  '/:business_id/:record_id',
+  validateBusinessId('params', 'business_id'),
+  recordController.getRecordById
+);
 
 export default router;

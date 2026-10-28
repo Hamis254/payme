@@ -310,6 +310,11 @@
         margin-bottom: 10px;
       }
 
+      .statement-header {
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
       .merchant-col {
         display: table-cell;
         vertical-align: top;
@@ -616,71 +621,75 @@
     </style>
   </head>
   <body>
-    <!-- HEADER -->
-    <div class="header-wrap">
-      <div class="digital-stamp">
-        <div class="stamp-outer">
-          <div class="stamp-inner">
-            <div class="stamp-top">Digitally</div>
-            <div class="stamp-logo">PAYME</div>
-            <div class="stamp-top">Verified</div>
-            <div class="stamp-rule"></div>
-            <div class="stamp-date">{{generated_date}}</div>
-            <div class="stamp-code">{{verification_code}}</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="header-top">
-        <div class="header-top-left">
-          {{#if payme_logo}}
-          <div class="payme-lockup">
-            <img src="{{payme_logo}}" alt="" class="payme-logo-img" />
-            <span class="payme-wordmark">PAYME</span>
-          </div>
-          {{else}}
-          <div class="payme-badge">PAYME</div>
-          {{/if}}
-          <div class="payme-tagline">BUSINESS FINANCIAL MANAGEMENT SYSTEM</div>
-
-          {{#if logo_url}}
-          <div class="business-logo-row">
-            <div class="business-logo-cell">
-              <img src="{{logo_url}}" alt="{{business_name}} logo" />
-            </div>
-            <div class="business-name-cell">
-              <div class="business-name">{{business_name}}</div>
+    <div class="statement-header">
+      <!-- HEADER -->
+      <div class="header-wrap">
+        <div class="digital-stamp">
+          <div class="stamp-outer">
+            <div class="stamp-inner">
+              <div class="stamp-top">Digitally</div>
+              <div class="stamp-logo">PAYME</div>
+              <div class="stamp-top">Verified</div>
+              <div class="stamp-rule"></div>
+              <div class="stamp-date">{{generated_date}}</div>
+              <div class="stamp-code">{{verification_code}}</div>
             </div>
           </div>
-          {{else}}
-          <div class="business-name">{{business_name}}</div>
-          {{/if}}
         </div>
-        <div class="header-top-right">
-          <div class="statement-label">FINANCIAL STATEMENT</div>
-          <div class="statement-ref">Ref: {{verification_code}}</div>
-          <div class="statement-ref">Generated: {{generated_date}}</div>
-          <div class="statement-period-badge">
-            {{statement_start_date}} &rarr; {{statement_end_date}}
+
+        <div class="header-top">
+          <div class="header-top-left">
+            {{#if payme_logo}}
+            <div class="payme-lockup">
+              <img src="{{payme_logo}}" alt="" class="payme-logo-img" />
+              <span class="payme-wordmark">PAYME</span>
+            </div>
+            {{else}}
+            <div class="payme-badge">PAYME</div>
+            {{/if}}
+            <div class="payme-tagline">BUSINESS FINANCIAL MANAGEMENT SYSTEM</div>
+
+            {{#if logo_url}}
+            <div class="business-logo-row">
+              <div class="business-logo-cell">
+                <img src="{{logo_url}}" alt="{{business_name}} logo" />
+              </div>
+              <div class="business-name-cell">
+                <div class="business-name">{{business_name}}</div>
+              </div>
+            </div>
+            {{else}}
+            <div class="business-name">{{business_name}}</div>
+            {{/if}}
+          </div>
+          <div class="header-top-right">
+            <div class="statement-label">FINANCIAL STATEMENT</div>
+            <div class="statement-ref">Ref: {{verification_code}}</div>
+            <div class="statement-ref">Generated: {{generated_date}}</div>
+            <div class="statement-period-badge">
+              {{statement_start_date}} &rarr; {{statement_end_date}}
+            </div>
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- MERCHANT INFO -->
-    <div class="merchant-box">
-      <div class="merchant-col">
-        <strong>BUSINESS NAME:</strong> {{business_name}}<br />
-        <strong>OWNER / OPERATOR:</strong> {{owner_name}}<br />
-        <strong>LOCATION:</strong> {{location}}<br />
-        <strong>ADDRESS:</strong> {{address}}
-      </div>
-      <div class="merchant-col">
-        <strong>PAYMENT COLLECTION:</strong> {{payment_method_label}} {{payment_shortcode}} — Ref: {{payment_account_reference}}<br />
-        <strong>EMAIL:</strong> {{email}}<br />
-        <strong>STATEMENT PERIOD:</strong> {{start_date}} to {{end_date}}<br />
-        <strong>RECORDS COUNT:</strong> {{record_count}} transactions
-        {{#if is_full_statement}}(full ledger included below){{else}}(summary only — no line-by-line ledger){{/if}}
+      <!-- MERCHANT INFO -->
+      <div class="merchant-box">
+        <div class="merchant-col">
+          <strong>BUSINESS NAME:</strong> {{business_name}}<br />
+          <strong>BUSINESS CODE:</strong> {{business_code}}<br />
+          <strong>OWNER / OPERATOR:</strong> {{owner_name}}<br />
+          <strong>ACCOUNT AGE:</strong> {{account_age}} (since {{member_since}})<br />
+          <strong>LOCATION:</strong> {{location}}<br />
+          <strong>ADDRESS:</strong> {{address}}
+        </div>
+        <div class="merchant-col">
+          <strong>PAYMENT COLLECTION:</strong> {{payment_method_label}} {{payment_shortcode}} — Ref: {{payment_account_reference}}<br />
+          <strong>EMAIL:</strong> {{email}}<br />
+          <strong>STATEMENT PERIOD:</strong> {{start_date}} to {{end_date}}<br />
+          <strong>RECORDS COUNT:</strong> {{record_count}} transactions
+          {{#if is_full_statement}}(full ledger included below){{else}}(summary only — no line-by-line ledger){{/if}}
+        </div>
       </div>
     </div>
   </body>

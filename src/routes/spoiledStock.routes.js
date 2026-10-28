@@ -1,5 +1,6 @@
 import express from 'express';
 import { authenticateToken } from '#middleware/auth.middleware.js';
+import { validateBusinessId } from '#middleware/businessId.middleware.js';
 import {
   recordSpoilageHandler,
   getSpoilageHandler,
@@ -16,13 +17,13 @@ router.use(authenticateToken);
 
 // POST /api/spoiled-stock/record
 // NOTE: revenueGuard removed — spoilage recording is free
-router.post('/record', recordSpoilageHandler);
+router.post('/record', validateBusinessId('body'), recordSpoilageHandler);
 
-router.get('/:businessId/summary', getSpoilageSummaryHandler);
-router.get('/:businessId/analytics', getSpoilageAnalyticsHandler);
-router.get('/:businessId/:spoilageId', getSpoilageHandler);
-router.get('/:businessId', listSpoilageHandler);
-router.patch('/:businessId/:spoilageId', updateSpoilageHandler);
-router.delete('/:businessId/:spoilageId', deleteSpoilageHandler);
+router.get('/:businessId/summary', validateBusinessId('params'), getSpoilageSummaryHandler);
+router.get('/:businessId/analytics', validateBusinessId('params'), getSpoilageAnalyticsHandler);
+router.get('/:businessId/:spoilageId', validateBusinessId('params'), getSpoilageHandler);
+router.get('/:businessId', validateBusinessId('params'), listSpoilageHandler);
+router.patch('/:businessId/:spoilageId', validateBusinessId('params'), updateSpoilageHandler);
+router.delete('/:businessId/:spoilageId', validateBusinessId('params'), deleteSpoilageHandler);
 
 export default router;

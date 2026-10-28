@@ -29,8 +29,10 @@ jest.mock('#services/stock.service.js', () => ({
   deductStockFIFO: jest.fn(),
   releaseStockReservation: jest.fn(),
 }));
+jest.mock('#services/record.service.js', () => ({ createRecord: jest.fn() }));
 
 import { db } from '#config/database.js';
+import { createRecord } from '#services/record.service.js';
 import { recordInstallmentPayment } from '#services/higherPurchase.service.js';
 import {
   hirePurchaseAgreements,
@@ -67,7 +69,10 @@ function makeTx(seed, log) {
     insert: table => ({
       values: vals => {
         log.push({ op: 'insert', table, vals });
-        return Promise.resolve([{ id: 900, ...vals }]);
+        const rows = [{ id: 900, ...vals }];
+        const promise = Promise.resolve(rows);
+        promise.returning = () => Promise.resolve(rows);
+        return promise;
       },
     }),
     update: table => ({
@@ -105,6 +110,7 @@ function seedAgreement({ balanceRemaining, estimatedCost = String(COST) }) {
       [
         {
           id: 11,
+          business_id: 20,
           sale_id: 38,
           total_amount: String(TOTAL),
           estimated_cost: estimatedCost,
@@ -120,10 +126,19 @@ function seedAgreement({ balanceRemaining, estimatedCost = String(COST) }) {
 /** Drive recordInstallmentPayment; return the captured writes. */
 async function runInstallment(seed, amountPaid) {
   const log = [];
-  db.transaction.mockImplementation(async cb => cb(makeTx(seed, log)));
+  let transactionCommitted = false;
+  let committedWrites = [];
+  db.transaction.mockImplementation(async cb => {
+    const result = await cb(makeTx(seed, log));
+    transactionCommitted = true;
+    committedWrites = log.slice();
+    return result;
+  });
 
   const result = await recordInstallmentPayment({
     agreementId: 11,
+    businessId: 20,
+    userId: 10,
     installmentId: 55,
     amountPaid,
     paymentMethod: 'cash',
@@ -133,12 +148,103 @@ async function runInstallment(seed, amountPaid) {
   const paymentInsert = log.find(
     e => e.op === 'insert' && e.table === hirePurchaseInstallmentPayments
   );
-  return { log, result, paymentInsert };
+  return {
+    log,
+    result,
+    paymentInsert,
+    transactionCommitted,
+    committedWrites,
+  };
 }
 
 beforeEach(() => jest.clearAllMocks());
 
 describe('recordInstallmentPayment — installment split writes real numbers', () => {
+  it('creates one hp_installment record and spends one token in the transaction', async () => {
+    const seed = seedAgreement({ balanceRemaining: 24457.6 });
+
+    await runInstallment(seed, 2000);
+
+    expect(createRecord).toHaveBeenCalledTimes(1);
+    expect(createRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        business_id: 20,
+        user_id: 10,
+        type: 'hp',
+        category: 'hp_installment',
+        amount: 2000,
+        payment_method: 'cash',
+        transaction_date: '2026-08-02',
+        reference_id: 'hp-installment-900',
+        description: 'Installment #1 received for agreement #11',
+      }),
+      expect.any(Object)
+    );
+    const paymentWrites = createRecord.mock.calls.filter(
+      ([record]) => record.category === 'hp_installment'
+    );
+    expect(paymentWrites).toHaveLength(1);
+  });
+
+  it('rolls back installment writes when the token charge fails', async () => {
+    createRecord.mockRejectedValueOnce(
+      new Error('Insufficient tokens. Please purchase tokens to create records.')
+    );
+    const seed = seedAgreement({ balanceRemaining: 24457.6 });
+    const log = [];
+    let transactionCommitted = false;
+    let committedWrites = [];
+    db.transaction.mockImplementation(async cb => {
+      const result = await cb(makeTx(seed, log));
+      transactionCommitted = true;
+      committedWrites = log.slice();
+      return result;
+    });
+
+    await expect(
+      recordInstallmentPayment({
+        agreementId: 11,
+        businessId: 20,
+        userId: 10,
+        installmentId: 55,
+        amountPaid: 2000,
+        paymentMethod: 'cash',
+      })
+    ).rejects.toThrow(/Insufficient tokens/);
+
+    expect(transactionCommitted).toBe(false);
+    expect(
+      committedWrites.some(
+        entry =>
+          entry.op === 'insert' &&
+          entry.table === hirePurchaseInstallmentPayments
+      )
+    ).toBe(false);
+  });
+
+  it('returns not-found for an agreement belonging to another business', async () => {
+    const seed = seedAgreement({ balanceRemaining: 24457.6 });
+    seed.set(hirePurchaseAgreements, [
+      { ...seed.get(hirePurchaseAgreements)[0], business_id: 21 },
+    ]);
+    const log = [];
+    db.transaction.mockImplementation(async cb => cb(makeTx(seed, log)));
+
+    await expect(
+      recordInstallmentPayment({
+        agreementId: 11,
+        businessId: 20,
+        userId: 10,
+        installmentId: 55,
+        amountPaid: 2000,
+        paymentMethod: 'cash',
+      })
+    ).rejects.toMatchObject({ statusCode: 404 });
+    expect(log.some(entry => entry.op === 'insert' || entry.op === 'update')).toBe(
+      false
+    );
+  });
+
   it('never writes NaN into the money columns', async () => {
     // The regression. Before estimated_cost existed as a column this
     // wrote the literal string "NaN" into cost_recovered/profit_realized.

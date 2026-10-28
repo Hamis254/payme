@@ -9,6 +9,7 @@ import {
 } from '#models/credit.model.js';
 import { sales, saleItems } from '#models/sales.model.js';
 import { businesses } from '#models/setting.model.js';
+import { customers } from '#models/customer.model.js';
 import { eq, and, inArray } from 'drizzle-orm';
 import { calculateCreditRepayment } from '#services/financialCalculations.js';
 import {
@@ -26,6 +27,7 @@ import { catchAsync } from '#utils/catchAsync.js';
 import * as creditService from '#services/credit.service.js';
 import * as recordService from '#services/record.service.js';
 import { getCreditSalesForBusiness } from '#services/credit.service.js';
+import { emitNotification, notifications } from '#utils/notificationEmitter.js';
 
 async function assertBusinessOwnership(userId, businessId) {
   const [business] = await db
@@ -185,9 +187,25 @@ export async function createCreditAccount(req, res, next) {
     }
 
     const { businessId, customerId, customerName, creditLimit } = parsed.data;
+    await assertBusinessOwnership(req.user.id, businessId);
 
     let accountId;
     await db.transaction(async tx => {
+      const [customer] = await tx
+        .select({ id: customers.id })
+        .from(customers)
+        .where(
+          and(
+            eq(customers.id, customerId),
+            eq(customers.business_id, businessId)
+          )
+        )
+        .limit(1);
+
+      if (!customer) {
+        throw new AuthorizationError('Customer not found or access denied');
+      }
+
       const [row] = await tx
         .insert(creditAccounts)
         .values({
@@ -266,7 +284,10 @@ export async function createCreditSale(req, res, next) {
 
     const { businessId, saleId, accountId, dueDate, outstandingAmount } =
       parsed.data;
+    await assertBusinessOwnership(req.user.id, businessId);
     let creditSaleId;
+    let customerName;
+    let balanceRemaining;
 
     await db.transaction(async tx => {
       // Verify the sale exists and is a credit sale
@@ -277,6 +298,10 @@ export async function createCreditSale(req, res, next) {
         .limit(1);
 
       if (!sale) {
+        throw new Error('Sale not found');
+      }
+
+      if (sale.business_id !== businessId) {
         throw new Error('Sale not found');
       }
 
@@ -295,9 +320,15 @@ export async function createCreditSale(req, res, next) {
         throw new Error('Credit account not found');
       }
 
+      if (account.business_id !== businessId) {
+        throw new Error('Credit account not found');
+      }
+      customerName = account.customer_name;
+
       // Check if adding this sale would exceed credit limit
       const newBalance =
         Number(account.balance_due) + Number(outstandingAmount);
+      balanceRemaining = newBalance;
       if (
         Number(account.credit_limit) > 0 &&
         newBalance > Number(account.credit_limit)
@@ -364,6 +395,23 @@ export async function createCreditSale(req, res, next) {
         tx
       );
     });
+
+    emitNotification({
+      user_id: req.user.id,
+      business_id: businessId,
+      ...notifications.creditSaleCreated({
+        credit_sale_id: creditSaleId,
+        amount: Number(outstandingAmount),
+        customer_name: customerName,
+        balance_remaining: balanceRemaining,
+        business_id: businessId,
+      }),
+    }).catch(error =>
+      logger.error('Failed to emit credit sale notification', {
+        creditSaleId,
+        error: error.message,
+      })
+    );
 
     logger.info(
       `Credit sale created: Sale #${saleId} linked to account #${accountId}`,
@@ -452,8 +500,11 @@ export async function recordCreditPayment(req, res, next) {
       reference,
     } = parsed.data;
 
+    await creditService.getCreditAccountById(req.user.id, accountId);
+
     let payment;
     let newBalance;
+    let paymentAccount;
 
     await db.transaction(async tx => {
       // Get account
@@ -465,6 +516,24 @@ export async function recordCreditPayment(req, res, next) {
 
       if (!account) {
         throw new Error('Credit account not found');
+      }
+      paymentAccount = account;
+
+      if (saleId) {
+        const [creditSale] = await tx
+          .select()
+          .from(creditSales)
+          .where(
+            and(
+              eq(creditSales.sale_id, saleId),
+              eq(creditSales.account_id, accountId)
+            )
+          )
+          .limit(1);
+
+        if (!creditSale) {
+          throw new Error('Credit sale not found');
+        }
       }
 
       if (Number(amount) > Number(account.balance_due)) {
@@ -546,7 +615,41 @@ export async function recordCreditPayment(req, res, next) {
         note: `Payment received - ${paymentMethod}${saleId ? ` for sale #${saleId}` : ''}`,
         created_at: new Date(),
       });
+
+      await recordService.createRecord(
+        {
+          business_id: account.business_id,
+          user_id: req.user.id,
+          type: 'credit',
+          category: 'credit_payment',
+          amount: Number(amount),
+          payment_method: paymentMethod,
+          transaction_date: new Date(),
+          reference_id: `credit-payment-${payment.id}`,
+          description: `Payment received from ${account.customer_name}`,
+          credit_status: 'paid',
+        },
+        tx
+      );
     });
+
+    emitNotification({
+      user_id: req.user.id,
+      business_id: paymentAccount.business_id,
+      ...notifications.creditPaymentReceived({
+        payment_id: payment.id,
+        amount: Number(amount),
+        customer_name: paymentAccount.customer_name,
+        credit_account_id: accountId,
+        balance_remaining: newBalance,
+        business_id: paymentAccount.business_id,
+      }),
+    }).catch(error =>
+      logger.error('Failed to emit credit payment notification', {
+        paymentId: payment.id,
+        error: error.message,
+      })
+    );
 
     logger.info(
       `Credit payment recorded: ${amount} for account #${accountId}`
@@ -555,9 +658,16 @@ export async function recordCreditPayment(req, res, next) {
       message: 'Payment recorded successfully',
       payment,
       newBalance,
+      tokens_remaining: req.revenueGuard.balance_before - 1,
     });
   } catch (err) {
     logger.error('Error recording credit payment', err);
+    if (err.message.includes('Insufficient tokens')) {
+      return res.status(402).json({
+        error: err.message,
+        code: 'PAYMENT_REQUIRED',
+      });
+    }
     if (err.message.includes('not found')) {
       return res.status(404).json({ error: err.message });
     }

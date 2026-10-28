@@ -64,3 +64,12 @@ export const testNotificationSchema = z.object({
     .optional(),
   channel: z.enum(['in_app', 'sms', 'email', 'all']).default('all'),
 });
+
+export const deviceTokenSchema = z.object({
+  token: z.string().trim().min(1).max(4096),
+  platform: z.enum(['android', 'ios', 'web']),
+});
+
+export const deleteDeviceTokenSchema = z.object({
+  token: z.string().trim().min(1).max(4096),
+});

@@ -4,8 +4,9 @@ import { eq, and, desc } from 'drizzle-orm';
 import { mpesaCallbackSchema } from '#validations/sales.validation.js';
 import { sales, saleItems } from '#models/sales.model.js';
 import { payments } from '#models/payments.model.js';
-import { wallets, walletTransactions } from '#models/myWallet.model.js';
+import { walletTransactions } from '#models/myWallet.model.js';
 import { businesses } from '#models/setting.model.js';
+import { refundWalletTransaction } from '#services/tokenLots.service.js';
 import { checkAndNotifyLowStock } from '#services/stock.service.js';
 import { createRecord } from '#services/record.service.js';
 import { applyCallback } from '#services/mpesaAttempt.service.js';
@@ -347,32 +348,29 @@ export const cancelSaleHandler = async (req, res, next) => {
       if (row.sale.status !== 'pending')
         throw new Error('Only pending sales can be cancelled');
 
-      // Refund token if one was reserved
-      if (row.sale.token_fee > 0) {
-        const [wallet] = await tx
-          .select()
-          .from(wallets)
-          .where(eq(wallets.business_id, row.sale.business_id))
-          .limit(1);
+      // Refund only a token that was actually charged for this sale. The old
+      // code added token_fee unconditionally, which minted a token for every
+      // cancelled sale that had never been charged. A charge that exists is
+      // reversed through its own lots.
+      const [charge] = await tx
+        .select()
+        .from(walletTransactions)
+        .where(
+          and(
+            eq(walletTransactions.business_id, row.sale.business_id),
+            eq(walletTransactions.reference, String(saleId)),
+            eq(walletTransactions.type, 'charge')
+          )
+        )
+        .limit(1);
 
-        if (wallet) {
-          await tx.insert(walletTransactions).values({
-            business_id: row.sale.business_id,
-            change_tokens: row.sale.token_fee,
-            type: 'refund',
-            reference: String(saleId),
-            note: 'Sale cancelled — token refunded',
-            created_at: new Date(),
-          });
-
-          await tx
-            .update(wallets)
-            .set({
-              balance_tokens: wallet.balance_tokens + row.sale.token_fee,
-              updated_at: new Date(),
-            })
-            .where(eq(wallets.id, wallet.id));
-        }
+      if (charge) {
+        await refundWalletTransaction(tx, {
+          businessId: row.sale.business_id,
+          walletTransactionId: charge.id,
+          reason: 'Sale cancelled — token refunded',
+          createdBy: req.user.id,
+        });
       }
 
       await tx

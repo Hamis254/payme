@@ -17,14 +17,16 @@ import { createCreditSale, assessCreditStockRisk } from '#services/credit.servic
 import { createAgreement } from '#services/higherPurchase.service.js';
 import { createRecord } from '#services/record.service.js';
 import { db } from '#config/database.js';
-import { wallets } from '#models/myWallet.model.js';
 import { mpesaAttempts } from '#models/mpesaAttempt.model.js';
+import { getSpendableBalance } from '#services/tokenLots.service.js';
 import {
   stageAttempt,
   attachCheckoutRequestId,
   abandonAttempt,
 } from '#services/mpesaAttempt.service.js';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
+import { businesses } from '#models/setting.model.js';
+import { emitNotification, notifications } from '#utils/notificationEmitter.js';
 
 class CreditStockRiskWarning extends Error {
   constructor(risk) {
@@ -169,13 +171,14 @@ export const processPayMe = async (req, res, next) => {
     // TOKEN GATE — no sale of any payment mode starts without at least
     // one token available. This is the app's revenue mechanism.
     // ══════════════════════════════════════════
-    const [wallet] = await db
-      .select()
-      .from(wallets)
-      .where(eq(wallets.business_id, business_id))
-      .limit(1);
+    // Spendable balance: expired trial tokens don't count. A missing wallet
+    // reads as zero, so it still gets the 402 below.
+    const spendable = await getSpendableBalance(business_id).catch(e => {
+      if (e.message.startsWith('Wallet not found')) return 0;
+      throw e;
+    });
 
-    if (!wallet || wallet.balance_tokens < 1) {
+    if (spendable < 1) {
       return res.status(402).json({
         error: 'Insufficient token balance',
         message: 'Token balance is 0. Please top up your wallet to continue selling.',
@@ -185,6 +188,8 @@ export const processPayMe = async (req, res, next) => {
 
     let result;
     let response;
+    let createdCreditSale;
+    let createdHpAgreement;
 
     if (payment_mode === 'mpesa') {
       // ══════════════════════════════════════════
@@ -347,7 +352,7 @@ export const processPayMe = async (req, res, next) => {
               throw new CreditStockRiskWarning(risk);
             }
 
-            await createCreditSale(
+            createdCreditSale = await createCreditSale(
               req.user.id,
               business_id,
               credit_account_id,
@@ -409,7 +414,7 @@ export const processPayMe = async (req, res, next) => {
               );
             }
 
-            const agreement = await createAgreement({
+            createdHpAgreement = await createAgreement({
               saleId: result.sale.id,
               accountId: hp_account_id,
               businessId: business_id,
@@ -448,7 +453,7 @@ export const processPayMe = async (req, res, next) => {
 
             response.hire_purchase = {
               status: 'agreement_created',
-              agreement_id: agreement.agreement?.id,
+              agreement_id: createdHpAgreement.agreement?.id,
               installments: hp_number_of_installments,
               installment_amount: hp_installment_amount,
               frequency: hp_installment_frequency,
@@ -502,6 +507,56 @@ export const processPayMe = async (req, res, next) => {
           message: txError.message,
         });
       }
+    }
+
+    if (payment_mode === 'cash') {
+      emitNotification({
+        user_id: req.user.id,
+        business_id,
+        ...notifications.paymentComplete({
+          amount: result.summary.total_amount,
+          sale_id: result.sale.id,
+          phone: customer_phone || null,
+        }),
+      }).catch(error =>
+        logger.error('Failed to emit cash sale notification', {
+          saleId: result.sale.id,
+          error: error.message,
+        })
+      );
+    } else if (payment_mode === 'credit') {
+      emitNotification({
+        user_id: req.user.id,
+        business_id,
+        ...notifications.creditSaleCreated({
+          credit_sale_id: createdCreditSale.creditSale.id,
+          amount: result.summary.total_amount,
+          customer_name,
+          balance_remaining: createdCreditSale.account.balance_due,
+          business_id,
+        }),
+      }).catch(error =>
+        logger.error('Failed to emit credit sale notification', {
+          creditSaleId: createdCreditSale.creditSale.id,
+          error: error.message,
+        })
+      );
+    } else if (payment_mode === 'hire_purchase') {
+      emitNotification({
+        user_id: req.user.id,
+        business_id,
+        ...notifications.hpAgreementCreated({
+          agreement_id: createdHpAgreement.agreement.id,
+          amount: Number(createdHpAgreement.agreement.total_amount),
+          customer_name,
+          business_id,
+        }),
+      }).catch(error =>
+        logger.error('Failed to emit hire-purchase agreement notification', {
+          agreementId: createdHpAgreement.agreement.id,
+          error: error.message,
+        })
+      );
     }
 
     logger.info(
@@ -687,6 +742,21 @@ export const getDailySalesLedgerHandler = async (req, res, next) => {
     const businessId = Number(req.params.businessId);
     if (Number.isNaN(businessId) || businessId <= 0) {
       return res.status(400).json({ error: 'Invalid business id' });
+    }
+
+    const [business] = await db
+      .select({ id: businesses.id })
+      .from(businesses)
+      .where(
+        and(
+          eq(businesses.id, businessId),
+          eq(businesses.user_id, req.user.id)
+        )
+      )
+      .limit(1);
+
+    if (!business) {
+      return res.status(403).json({ error: 'Business not found or access denied' });
     }
 
     // Midnight-to-midnight in Nairobi. This was written out by hand here; it

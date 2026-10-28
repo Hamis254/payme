@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MAX_CUSTOM_KES, MIN_CUSTOM_KES } from '#config/tokenPricing.js';
 
 // Phone number validation with normalization
 const phonePreprocess = val => {
@@ -31,22 +32,40 @@ export const tokenPackages = {
   1500: { tokens: 1300, price: 1200 },
 };
 
-const packageTypeEnum = z.enum(['30', '70', '150', '400', '800', '1000', '1200']);
+const packageTypeEnum = z.enum(Object.keys(tokenPackages));
+
+const purchaseSchema = fields =>
+  z
+    .object({
+      packageType: packageTypeEnum.optional(),
+      amount: z
+        .number()
+        .int()
+        .min(MIN_CUSTOM_KES)
+        .max(MAX_CUSTOM_KES)
+        .optional(),
+      phone: phoneSchema,
+      ...fields,
+    })
+    .superRefine(({ packageType, amount }, context) => {
+      if ((packageType === undefined) === (amount === undefined)) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Provide either packageType or amount, but not both',
+          path: ['packageType'],
+        });
+      }
+    });
 
 // Initiate token purchase (M-Pesa) — used by wallet.routes.js's body-based
 // POST /purchase, where businessId is NOT in the URL so it must be in the body.
-export const initiateTokenPurchaseSchema = z.object({
+export const initiateTokenPurchaseSchema = purchaseSchema({
   businessId: z.number().int().positive(),
-  packageType: packageTypeEnum,
-  phone: phoneSchema,
 });
 
 // Initiate token purchase for myWallet.routes.js's POST /:businessId/purchase-tokens
 // — businessId already comes from the URL param, so it must NOT be required here.
-export const initiateMyWalletTokenPurchaseSchema = z.object({
-  packageType: packageTypeEnum,
-  phone: phoneSchema,
-});
+export const initiateMyWalletTokenPurchaseSchema = purchaseSchema({});
 
 // Manual token addition (admin/cash payment) — businessId comes from the
 // URL param on POST /:businessId/add-tokens, so it's not required in the body.

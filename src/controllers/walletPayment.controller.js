@@ -6,6 +6,11 @@ import {
   walletTransactions,
   walletPayments,
 } from '#models/myWallet.model.js';
+import { TOKEN_SOURCES } from '#models/tokenLot.model.js';
+import {
+  getWalletSummary,
+  grantLot,
+} from '#services/tokenLots.service.js';
 import { businesses } from '#models/setting.model.js';
 import { sales } from '#models/sales.model.js';
 
@@ -170,24 +175,20 @@ export const completeWalletPayment = async (req, res, next) => {
       if (wallet) {
         const amountInTokens = Math.floor(walletPayment.amount_ksh / 2); // 1 token = KSH 2
 
-        // Add transaction record
-        await db.insert(walletTransactions).values({
-          business_id: walletPayment.business_id,
-          change_tokens: amountInTokens,
-          type: 'purchase',
-          reference: `PAYMENT-${walletPaymentId}`,
-          note: `Wallet payment for sale #${walletPayment.sale_id}`,
-          created_at: new Date(),
-        });
-
-        // Update wallet balance
-        await db
-          .update(wallets)
-          .set({
-            balance_tokens: wallet.balance_tokens + amountInTokens,
-            updated_at: new Date(),
-          })
-          .where(eq(wallets.id, wallet.id));
+        // Tokens credited by a wallet-till payment are purchased tokens and
+        // never expire.
+        if (amountInTokens > 0) {
+          await db.transaction(tx =>
+            grantLot(tx, {
+              businessId: walletPayment.business_id,
+              source: TOKEN_SOURCES.PURCHASE,
+              tokens: amountInTokens,
+              txType: 'purchase',
+              reference: `PAYMENT-${walletPaymentId}`,
+              note: `Wallet payment for sale #${walletPayment.sale_id}`,
+            })
+          );
+        }
 
         logger.info('Wallet payment completed successfully', {
           walletPaymentId,
@@ -309,18 +310,22 @@ export const getWalletBalance = async (req, res, next) => {
       return res.status(404).json({ error: 'Wallet not found' });
     }
 
-    const walletValueKsh = wallet.balance_tokens * 2; // 1 token = KSH 2
+    // Spendable balance, with expired trial tokens already excluded.
+    const summary = await getWalletSummary(businessId);
+    const walletValueKsh = summary.balance * 2; // 1 token = KSH 2
 
     res.status(200).json({
       message: 'Wallet balance retrieved',
       wallet: {
         id: wallet.id,
         businessId: wallet.business_id,
-        balanceTokens: wallet.balance_tokens,
+        balanceTokens: summary.balance,
         balanceKsh: walletValueKsh,
         createdAt: wallet.created_at,
         updatedAt: wallet.updated_at,
       },
+      balance: summary.balance,
+      trial: summary.trial,
     });
   } catch (error) {
     logger.error('Error getting wallet balance', error);

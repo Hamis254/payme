@@ -9,6 +9,17 @@ import {
 import { businesses } from '#models/setting.model.js';
 import { initiateTokenPurchase as initiateMpesaTokenPurchase } from '#utils/mpesa.js';
 import { tokenPackages } from '#validations/wallet.validation.js';
+import { TOKEN_SOURCES } from '#models/tokenLot.model.js';
+import {
+  kesToTokens,
+  MAX_CUSTOM_KES,
+  MIN_CUSTOM_KES,
+} from '#config/tokenPricing.js';
+import {
+  getSpendableBalance,
+  getWalletSummary,
+  grantLot,
+} from '#services/tokenLots.service.js';
 
 // ============ WALLET INITIALIZATION ============
 
@@ -56,14 +67,31 @@ export const getOrCreateWallet = async (userId, businessId) => {
 export const initiateTokenPurchase = async (
   userId,
   businessId,
-  packageType,
-  phone
+  { packageType, amount, phone }
 ) => {
   try {
-    const wallet = await getOrCreateWallet(userId, businessId);
+    await getOrCreateWallet(userId, businessId);
 
-    const packageInfo = tokenPackages[packageType];
-    if (!packageInfo) throw new Error('Invalid package type');
+    const hasPackage = packageType !== undefined;
+    const hasAmount = amount !== undefined;
+    if (hasPackage === hasAmount) {
+      throw new Error('Provide either a package type or custom amount');
+    }
+
+    const packageInfo = hasPackage ? tokenPackages[packageType] : null;
+    if (hasPackage && !packageInfo) throw new Error('Invalid package type');
+    if (
+      hasAmount &&
+      (!Number.isInteger(amount) ||
+        amount < MIN_CUSTOM_KES ||
+        amount > MAX_CUSTOM_KES)
+    ) {
+      throw new Error('Invalid custom purchase amount');
+    }
+
+    const purchaseAmount = packageInfo?.price ?? amount;
+    const tokens = packageInfo?.tokens ?? kesToTokens(amount);
+    const purchasePackageType = packageType ?? 'custom';
 
     // Token purchases always use the platform wallet till number (3485049)
 
@@ -71,9 +99,9 @@ export const initiateTokenPurchase = async (
       .insert(tokenPurchases)
       .values({
         business_id: businessId,
-        package_type: packageType,
-        tokens_purchased: packageInfo.tokens,
-        amount_paid: String(packageInfo.price),
+        package_type: purchasePackageType,
+        tokens_purchased: tokens,
+        amount_paid: String(purchaseAmount),
         payment_method: 'mpesa',
         status: 'pending',
         mpesa_phone: phone,
@@ -83,7 +111,7 @@ export const initiateTokenPurchase = async (
 
     const mpesaResp = await initiateMpesaTokenPurchase({
       phone,
-      amount: packageInfo.price,
+      amount: purchaseAmount,
       accountReference: `TOKEN-${purchase.id}`,
     });
 
@@ -96,15 +124,16 @@ export const initiateTokenPurchase = async (
       .where(eq(tokenPurchases.id, purchase.id));
 
     logger.info(
-      `Token purchase initiated: ${packageInfo.tokens} tokens for business ${businessId}`
+      `Token purchase initiated: ${tokens} tokens for business ${businessId}`
     );
 
     return {
       purchaseId: purchase.id,
-      tokens: packageInfo.tokens,
-      amount: packageInfo.price,
+      packageType: purchasePackageType,
+      tokens,
+      amount: purchaseAmount,
       checkoutRequestId: mpesaResp.CheckoutRequestID,
-      currentBalance: wallet.balance_tokens,
+      currentBalance: await getSpendableBalance(businessId),
     };
   } catch (e) {
     logger.error('Error initiating token purchase', e);
@@ -141,6 +170,28 @@ export const processTokenPurchaseCallback = async callbackData => {
     const phone = items.find(i => i.Name === 'PhoneNumber')?.Value || null;
 
     if (ResultCode === 0) {
+      const callbackAmount = items.find(i => i.Name === 'Amount')?.Value;
+      if (
+        callbackAmount === undefined ||
+        !Number.isFinite(Number(callbackAmount)) ||
+        Number(callbackAmount) !== Number(purchase.amount_paid)
+      ) {
+        logger.error('Token purchase callback amount mismatch', {
+          purchaseId: purchase.id,
+          expectedAmount: Number(purchase.amount_paid),
+          callbackAmount,
+        });
+        await db
+          .update(tokenPurchases)
+          .set({
+            status: 'failed',
+            callback_payload: JSON.stringify(callbackData),
+          })
+          .where(eq(tokenPurchases.id, purchase.id));
+
+        return { status: 'failed', purchaseId: purchase.id };
+      }
+
       await db.transaction(async tx => {
         await tx
           .update(tokenPurchases)
@@ -153,29 +204,17 @@ export const processTokenPurchaseCallback = async callbackData => {
           })
           .where(eq(tokenPurchases.id, purchase.id));
 
-        const [wallet] = await tx
-          .select()
-          .from(wallets)
-          .where(eq(wallets.business_id, purchase.business_id))
-          .limit(1);
-
-        const newBalance = wallet.balance_tokens + purchase.tokens_purchased;
-
-        await tx
-          .update(wallets)
-          .set({
-            balance_tokens: newBalance,
-            updated_at: new Date(),
-          })
-          .where(eq(wallets.id, wallet.id));
-
-        await tx.insert(walletTransactions).values({
-          business_id: purchase.business_id,
-          change_tokens: purchase.tokens_purchased,
-          type: 'purchase',
+        // Purchased tokens never expire. grantLot locks the wallet itself.
+        await grantLot(tx, {
+          businessId: purchase.business_id,
+          source: TOKEN_SOURCES.PURCHASE,
+          tokens: purchase.tokens_purchased,
+          txType: 'purchase',
           reference: String(purchase.id),
-          note: `Token purchase - ${purchase.package_type} package`,
-          created_at: new Date(),
+          note:
+            purchase.package_type === 'custom'
+              ? 'Token purchase - custom top-up'
+              : `Token purchase - ${purchase.package_type} package`,
         });
       });
 
@@ -220,9 +259,9 @@ export const addTokensManually = async (
   paymentMethod
 ) => {
   try {
-    const wallet = await getOrCreateWallet(userId, businessId);
+    await getOrCreateWallet(userId, businessId);
 
-    await db.transaction(async tx => {
+    const grant = await db.transaction(async tx => {
       const price = tokens * 2;
 
       await tx.insert(tokenPurchases).values({
@@ -236,22 +275,14 @@ export const addTokensManually = async (
         created_at: new Date(),
       });
 
-      await tx
-        .update(wallets)
-        .set({
-          balance_tokens: wallet.balance_tokens + tokens,
-          updated_at: new Date(),
-        })
-        .where(eq(wallets.id, wallet.id));
-
-      await tx.insert(walletTransactions).values({
-        business_id: businessId,
-        change_tokens: tokens,
-        type: 'purchase',
-        reference: null,
+      // Manually added tokens never expire.
+      return grantLot(tx, {
+        businessId,
+        source: TOKEN_SOURCES.MANUAL,
+        tokens,
+        txType: 'purchase',
         note: note || `Manual token addition - ${paymentMethod}`,
-        created_at: new Date(),
-        created_by: userId,
+        createdBy: userId,
       });
     });
 
@@ -259,7 +290,7 @@ export const addTokensManually = async (
 
     return {
       tokensAdded: tokens,
-      newBalance: wallet.balance_tokens + tokens,
+      newBalance: grant.balanceAfter,
     };
   } catch (e) {
     logger.error('Error adding tokens manually', e);
@@ -271,7 +302,9 @@ export const addTokensManually = async (
 
 export const getWalletBalance = async (userId, businessId) => {
   try {
-    const wallet = await getOrCreateWallet(userId, businessId);
+    await getOrCreateWallet(userId, businessId);
+    // Spendable balance, with expired trial tokens already excluded.
+    const summary = await getWalletSummary(businessId);
 
     const recentTransactions = await db
       .select()
@@ -281,7 +314,8 @@ export const getWalletBalance = async (userId, businessId) => {
       .limit(5);
 
     return {
-      balance: wallet.balance_tokens,
+      balance: summary.balance,
+      trial: summary.trial,
       recentTransactions,
     };
   } catch (e) {

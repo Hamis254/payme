@@ -23,6 +23,19 @@ jest.mock('#config/database.js', () => ({
 }));
 
 jest.mock('#services/record.service.js', () => ({ createRecord: jest.fn() }));
+jest.mock('#utils/notificationEmitter.js', () => ({
+  emitNotification: jest.fn(),
+  notifications: {
+    creditSaleCreated: jest.fn(args => ({
+      type: 'credit_sale_created',
+      metadata: args,
+    })),
+    creditPaymentReceived: jest.fn(args => ({
+      type: 'credit_payment_received',
+      metadata: args,
+    })),
+  },
+}));
 jest.mock('#services/credit.service.js', () => ({
   getCreditSalesForBusiness: jest.fn(),
   getCreditAccountsForBusiness: jest.fn(),
@@ -30,19 +43,28 @@ jest.mock('#services/credit.service.js', () => ({
 }));
 
 import { db } from '#config/database.js';
-import { recordCreditPayment } from '../src/controllers/credit.controller.js';
+import {
+  createCreditSale,
+  recordCreditPayment,
+} from '../src/controllers/credit.controller.js';
+import { createRecord } from '#services/record.service.js';
+import { emitNotification, notifications } from '#utils/notificationEmitter.js';
 import {
   creditAccounts,
   creditSales,
   creditPayments,
 } from '#models/credit.model.js';
 import { sales, saleItems } from '#models/sales.model.js';
+import { businesses } from '#models/setting.model.js';
 
 /**
  * Minimal stand-in for a drizzle transaction. Rows are seeded per table
  * and returned regardless of the where() predicate, so these tests pin
  * the arithmetic and the call ordering — not the SQL predicates.
  */
+let txCommittedAtNotify = false;
+let notificationCommitStates = [];
+
 function makeTx(seed, log) {
   const rowsFor = table => seed.get(table) ?? [];
 
@@ -82,7 +104,17 @@ function makeTx(seed, log) {
 /** Seed the two-sale receivable, with outstanding amounts supplied per test. */
 function seedReceivable({ balanceDue, outstanding501, outstanding502 }) {
   return new Map([
-    [creditAccounts, [{ id: 1, balance_due: String(balanceDue) }]],
+    [
+      creditAccounts,
+      [
+        {
+          id: 1,
+          business_id: 20,
+          customer_name: 'Customer One',
+          balance_due: String(balanceDue),
+        },
+      ],
+    ],
     [
       creditSales,
       [
@@ -120,9 +152,22 @@ function seedReceivable({ balanceDue, outstanding501, outstanding502 }) {
 /** Drive recordCreditPayment against a seeded tx; return the captured writes. */
 async function runPayment(seed, body) {
   const log = [];
-  db.transaction.mockImplementation(async cb => cb(makeTx(seed, log)));
+  let transactionCommitted = false;
+  let committedWrites = [];
+  txCommittedAtNotify = false;
+  db.transaction.mockImplementation(async cb => {
+    const result = await cb(makeTx(seed, log));
+    transactionCommitted = true;
+    txCommittedAtNotify = true;
+    committedWrites = log.slice();
+    return result;
+  });
 
-  const req = { body, user: { id: 10 } };
+  const req = {
+    body,
+    user: { id: 10 },
+    revenueGuard: { balance_before: 5 },
+  };
   const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
   const next = jest.fn();
 
@@ -131,12 +176,188 @@ async function runPayment(seed, body) {
   const paymentInsert = log.find(
     e => e.op === 'insert' && e.table === creditPayments
   );
-  return { log, res, next, paymentInsert };
+  return {
+    log,
+    res,
+    next,
+    paymentInsert,
+    transactionCommitted,
+    committedWrites,
+  };
 }
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  txCommittedAtNotify = false;
+  notificationCommitStates = [];
+  emitNotification.mockImplementation(() => {
+    notificationCommitStates.push(txCommittedAtNotify);
+    return Promise.resolve();
+  });
+  db.select.mockImplementation(() => ({
+    from: table => ({
+      where: () => ({
+        limit: async () => (table === businesses ? [{ id: 20 }] : []),
+      }),
+    }),
+  }));
+});
 
 describe('recordCreditPayment — cost-recovery-first split', () => {
+  it('emits one credit-sale notification after its transaction commits', async () => {
+    const seed = new Map([
+      [sales, [{ id: 501, business_id: 20, customer_type: 'credit' }]],
+      [
+        creditAccounts,
+        [
+          {
+            id: 1,
+            business_id: 20,
+            customer_name: 'Customer One',
+            balance_due: '100',
+            credit_limit: '1000',
+            is_active: true,
+          },
+        ],
+      ],
+    ]);
+    const log = [];
+    txCommittedAtNotify = false;
+    db.transaction.mockImplementation(async cb => {
+      const result = await cb(makeTx(seed, log));
+      txCommittedAtNotify = true;
+      return result;
+    });
+    const req = {
+      body: {
+        businessId: 20,
+        saleId: 501,
+        accountId: 1,
+        dueDate: '2026-11-01',
+        outstandingAmount: 200,
+      },
+      user: { id: 10 },
+      revenueGuard: { balance_before: 5 },
+    };
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    const next = jest.fn();
+
+    await createCreditSale(req, res, next);
+
+    expect(emitNotification).toHaveBeenCalledTimes(1);
+    expect(notifications.creditSaleCreated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        credit_sale_id: 4242,
+        amount: 200,
+        customer_name: 'Customer One',
+        balance_remaining: 300,
+        business_id: 20,
+      })
+    );
+    expect(notificationCommitStates).toEqual([true]);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('does not emit a credit-sale notification when the transaction fails', async () => {
+    db.transaction.mockRejectedValueOnce(new Error('transaction rolled back'));
+    const req = {
+      body: {
+        businessId: 20,
+        saleId: 501,
+        accountId: 1,
+        dueDate: '2026-11-01',
+        outstandingAmount: 200,
+      },
+      user: { id: 10 },
+    };
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    const next = jest.fn();
+
+    await createCreditSale(req, res, next);
+
+    expect(emitNotification).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'transaction rolled back' })
+    );
+  });
+
+  it('charges one token and writes a paid credit_payment record atomically', async () => {
+    const seed = seedReceivable({
+      balanceDue: 1500,
+      outstanding501: 1000,
+      outstanding502: 500,
+    });
+
+    const { log, res, paymentInsert } = await runPayment(seed, {
+      accountId: 1,
+      amount: 400,
+      paymentMethod: 'cash',
+    });
+
+    expect(paymentInsert).toBeDefined();
+    expect(createRecord).toHaveBeenCalledTimes(1);
+    expect(createRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        business_id: 20,
+        user_id: 10,
+        type: 'credit',
+        category: 'credit_payment',
+        amount: 400,
+        payment_method: 'cash',
+        reference_id: 'credit-payment-4242',
+        description: 'Payment received from Customer One',
+        credit_status: 'paid',
+      }),
+      expect.any(Object)
+    );
+    expect(log.filter(entry => entry.op === 'insert' && entry.table === creditPayments))
+      .toHaveLength(1);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ tokens_remaining: 4 })
+    );
+    expect(emitNotification).toHaveBeenCalledTimes(1);
+    expect(notifications.creditPaymentReceived).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 400,
+        customer_name: 'Customer One',
+        balance_remaining: 1100,
+        business_id: 20,
+      })
+    );
+    expect(notificationCommitStates).toEqual([true]);
+  });
+
+  it('returns 402 and rolls back the payment when the atomic token spend fails', async () => {
+    createRecord.mockRejectedValueOnce(
+      new Error('Insufficient tokens. Please purchase tokens to create records.')
+    );
+    const seed = seedReceivable({
+      balanceDue: 1500,
+      outstanding501: 1000,
+      outstanding502: 500,
+    });
+
+    const { res, next, transactionCommitted, committedWrites } =
+      await runPayment(seed, {
+        accountId: 1,
+        amount: 400,
+        paymentMethod: 'cash',
+      });
+
+    expect(res.status).toHaveBeenCalledWith(402);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'PAYMENT_REQUIRED' })
+    );
+    expect(transactionCommitted).toBe(false);
+    expect(
+      committedWrites.some(
+        entry => entry.op === 'insert' && entry.table === creditPayments
+      )
+    ).toBe(false);
+    expect(emitNotification).not.toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
+  });
+
   it('books an early payment as pure cost recovery, zero profit', async () => {
     // Nothing received yet: outstanding 1000 + 500 = 1500 = full value.
     const seed = seedReceivable({

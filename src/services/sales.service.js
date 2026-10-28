@@ -74,7 +74,6 @@ import {
   calculateExpenseImpact,
 } from '#services/financialCalculations.js';
 
-import { emitNotification, notifications } from '#utils/notificationEmitter.js';
 import { checkAndNotifyLowStock } from '#services/stock.service.js';
 
 const round2 = n => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
@@ -334,18 +333,6 @@ export const createSale = async (userId, businessId, items, paymentMode, options
         updated_at: new Date(),
       })
       .returning();
-
-    if (paymentMode === 'cash') {
-      await emitNotification({
-        user_id: userId,
-        business_id: businessId,
-        ...notifications.paymentComplete({
-          amount: cartValidation.total_amount,
-          sale_id: sale.id,
-          phone: options.customer_phone || null,
-        }),
-      });
-    }
 
     for (const item of processedItems) {
       await client.insert(saleItems).values({

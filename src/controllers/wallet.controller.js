@@ -14,6 +14,12 @@ import {
   getWalletTransactions as getTransactionsService,
   getTokenPurchaseHistory,
 } from '#services/wallet.service.js';
+import { getWalletSummary } from '#services/tokenLots.service.js';
+import {
+  MAX_CUSTOM_KES,
+  MIN_CUSTOM_KES,
+  TOKEN_PRICE_KES,
+} from '#config/tokenPricing.js';
 
 // ============ GET WALLET BALANCE ============
 
@@ -29,6 +35,8 @@ export const getWalletBalance = async (req, res, next) => {
     }
 
     const wallet = await getOrCreateWallet(req.user.id, businessId);
+    // Spendable balance, with expired trial tokens already excluded.
+    const summary = await getWalletSummary(businessId);
 
     logger.info(`Wallet balance retrieved for business ${businessId}`);
 
@@ -36,13 +44,15 @@ export const getWalletBalance = async (req, res, next) => {
       message: 'Wallet balance retrieved successfully',
       wallet: {
         businessId: wallet.business_id,
-        balanceTokens: wallet.balance_tokens,
+        balanceTokens: summary.balance,
         createdAt: wallet.created_at,
         updatedAt: wallet.updated_at,
       },
+      balance: summary.balance,
+      trial: summary.trial,
       tokenValue: {
-        tokens: wallet.balance_tokens,
-        estimatedValueKES: wallet.balance_tokens * 2, // 1 token = 2 KES
+        tokens: summary.balance,
+        estimatedValueKES: summary.balance * 2, // 1 token = 2 KES
       },
     });
   } catch (e) {
@@ -73,17 +83,16 @@ export const initiateTokenPurchaseHandler = async (req, res, next) => {
       });
     }
 
-    const { businessId, packageType, phone } = validationResult.data;
+    const { businessId, packageType, amount, phone } = validationResult.data;
 
-    const result = await initiateTokenPurchase(
-      req.user.id,
-      businessId,
+    const result = await initiateTokenPurchase(req.user.id, businessId, {
       packageType,
-      phone
-    );
+      amount,
+      phone,
+    });
 
     logger.info(
-      `Token purchase initiated: ${packageType} package for business ${businessId}`
+      `Token purchase initiated: ${result.packageType} purchase for business ${businessId}`
     );
 
     res.status(201).json({
@@ -91,7 +100,7 @@ export const initiateTokenPurchaseHandler = async (req, res, next) => {
         'Token purchase initiated. Please complete payment on your phone.',
       purchase: {
         purchaseId: result.purchaseId,
-        packageType,
+        packageType: result.packageType,
         tokens: result.tokens,
         amount: result.amount,
         currentBalance: result.currentBalance,
@@ -327,9 +336,10 @@ export const getTokenPackagesHandler = async (req, res) => {
       tokens: value.tokens,
       price: value.price,
       pricePerToken: (value.price / value.tokens).toFixed(2),
-      savings: value.tokens * 2 - value.price, // vs retail price
+      savings: value.tokens * TOKEN_PRICE_KES - value.price,
       savingsPercent: (
-        ((value.tokens * 2 - value.price) / (value.tokens * 2)) *
+        ((value.tokens * TOKEN_PRICE_KES - value.price) /
+          (value.tokens * TOKEN_PRICE_KES)) *
         100
       ).toFixed(1),
     }));
@@ -338,8 +348,13 @@ export const getTokenPackagesHandler = async (req, res) => {
       message: 'Token packages retrieved successfully',
       packages,
       retailPrice: {
-        perToken: 2,
+        perToken: TOKEN_PRICE_KES,
         currency: 'KES',
+      },
+      customPurchase: {
+        minKes: MIN_CUSTOM_KES,
+        maxKes: MAX_CUSTOM_KES,
+        kesPerToken: TOKEN_PRICE_KES,
       },
     });
   } catch (e) {

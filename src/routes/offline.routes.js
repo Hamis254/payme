@@ -221,7 +221,11 @@ router.post('/sync/:queueId', authenticateToken, async (req, res, next) => {
 
     if (!queueId) return res.status(400).json({ error: 'queueId required' });
 
-    const result = await syncOperation(parseInt(queueId, 10), serverResponse);
+    const result = await syncOperation(
+      parseInt(queueId, 10),
+      serverResponse,
+      req.user.id
+    );
     return res.json({ success: true, result });
   } catch (error) {
     logger.error('Error syncing operation', error);
@@ -242,7 +246,11 @@ router.post('/resolve/:queueId', authenticateToken, async (req, res, next) => {
       return res.status(400).json({ error: 'queueId and strategy required' });
     }
 
-    const result = await resolveConflict(parseInt(queueId, 10), strategy);
+    const result = await resolveConflict(
+      parseInt(queueId, 10),
+      strategy,
+      req.user.id
+    );
     return res.json({ success: true, result, message: `Conflict resolved using ${strategy} strategy` });
   } catch (error) {
     logger.error('Error resolving conflict', error);
@@ -337,7 +345,15 @@ router.get('/history/:queueId', authenticateToken, async (req, res, next) => {
     if (!queueId) return res.status(400).json({ error: 'queueId required' });
 
     const limit   = parseInt(req.query.limit ?? '10', 10);
-    const history = await getSyncHistory(parseInt(queueId, 10), limit);
+    const history = await getSyncHistory(
+      parseInt(queueId, 10),
+      req.user.id,
+      limit
+    );
+
+    if (!history) {
+      return res.status(404).json({ error: 'Operation not found' });
+    }
 
     return res.json({ success: true, history, count: history.length });
   } catch (error) {

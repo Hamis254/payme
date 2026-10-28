@@ -15,12 +15,14 @@ import {
   startOfBusinessDay,
   endOfBusinessDay,
   businessDayKey,
+  resolveStatementRange,
 } from '#utils/businessDay.js';
 import {
   createRecordSchema,
   queryRecordsSchema,
   dashboardInsightsSchema,
   generateStatementSchema,
+  statementRangeSchema,
 } from '#validations/record.validation.js';
 
 /**
@@ -35,14 +37,14 @@ export async function createRecord(req, res, next) {
     const { id: user_id } = req.user;
 
     const validationResult = createRecordSchema.safeParse({
-      business_id: parseInt(business_id),
       ...req.body,
+      business_id: parseInt(business_id),
     });
 
     if (!validationResult.success) {
       return res.status(400).json({
         error: 'Validation failed',
-        details: validationResult.error.errors,
+        details: validationResult.error.issues,
         request_id: requestId,
       });
     }
@@ -117,7 +119,7 @@ export async function getRecords(req, res, next) {
     if (!validationResult.success) {
       return res.status(400).json({
         error: 'Invalid query parameters',
-        details: validationResult.error.errors,
+        details: validationResult.error.issues,
       });
     }
 
@@ -217,7 +219,7 @@ export async function getDashboardInsights(req, res, next) {
     if (!validationResult.success) {
       return res.status(400).json({
         error: 'Invalid query parameters',
-        details: validationResult.error.errors,
+        details: validationResult.error.issues,
       });
     }
 
@@ -245,15 +247,27 @@ export async function getDashboardInsights(req, res, next) {
 export async function getStatementFinancialsPreview(req, res, next) {
   try {
     const { business_id } = req.params;
-    const { start_date, end_date } = req.query;
 
-    // Nairobi day bounds, not UTC midnight — see utils/businessDay.js. Using
-    // new Date('YYYY-MM-DD') here cut the range at 03:00 local on the final
-    // day, so the preview silently dropped the last trading day.
+    const validationResult = statementRangeSchema.safeParse(req.query);
+    if (!validationResult.success) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: validationResult.error.issues,
+      });
+    }
+    const { start_date, end_date } = validationResult.data;
+
+    // Same resolver as the PDF (statementService), so the preview and the
+    // document cover identical Nairobi days. Start defaults to today; an end
+    // date in the future is clamped to today.
+    const { start, end } = resolveStatementRange(
+      start_date ?? businessDayKey(),
+      end_date
+    );
     const financials = await getStatementFinancials(
       parseInt(business_id, 10),
-      startOfBusinessDay(start_date) ?? startOfBusinessDay(businessDayKey()),
-      endOfBusinessDay(end_date) ?? endOfBusinessDay(businessDayKey())
+      start,
+      end
     );
 
     return res.status(200).json({
@@ -334,14 +348,14 @@ export async function generateStatement(req, res, next) {
 
   try {
     const validationResult = generateStatementSchema.safeParse({
-      business_id: parseInt(business_id),
       ...req.body,
+      business_id: parseInt(business_id),
     });
 
     if (!validationResult.success) {
       return res.status(400).json({
         error: 'Validation failed',
-        details: validationResult.error.errors,
+        details: validationResult.error.issues,
       });
     }
 

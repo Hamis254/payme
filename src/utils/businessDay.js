@@ -82,3 +82,69 @@ export function businessDayRange(value) {
 
   return { dayKey: key, dayStart: startOfBusinessDay(key), dayEnd: endOfBusinessDay(key) };
 }
+
+/**
+ * The Nairobi 'YYYY-MM-DD' key for a bare date string or for any instant
+ * (Date, or an ISO string, which is reduced to the Nairobi day it falls on).
+ * Returns null for empty or unparseable input.
+ *
+ * @param {string|Date|null|undefined} value
+ * @returns {string|null}
+ */
+export function toBusinessDayKey(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'string' && DATE_ONLY.test(value)) return value;
+  const instant = new Date(value);
+  return isNaN(instant.getTime()) ? null : businessDayKey(instant);
+}
+
+/**
+ * Resolves a statement or preview window to whole Nairobi days. Statements
+ * are day-granular, so both edges come back as day keys and the preview and
+ * the PDF share one definition of the range.
+ *
+ * - end defaults to today when omitted.
+ * - end later than today is clamped to today.
+ * - start is null when omitted; callers decide what that means.
+ *
+ * @param {string|Date|null|undefined} startValue
+ * @param {string|Date|null|undefined} endValue
+ * @param {Date} [now] injectable clock, for tests
+ * @returns {{ startKey: string|null, endKey: string, start: Date|null, end: Date }}
+ * @throws {RangeError} when a supplied date cannot be parsed
+ */
+export function resolveStatementRange(startValue, endValue, now = new Date()) {
+  const todayKey = businessDayKey(now);
+
+  const startKey = toBusinessDayKey(startValue);
+  if (startValue && !startKey) {
+    throw new RangeError(`Invalid start date: "${startValue}"`);
+  }
+
+  let endKey = toBusinessDayKey(endValue);
+  if (endValue && !endKey) {
+    throw new RangeError(`Invalid end date: "${endValue}"`);
+  }
+  if (!endKey || endKey > todayKey) {
+    endKey = todayKey;
+  }
+
+  return {
+    startKey,
+    endKey,
+    start: startKey ? startOfBusinessDay(startKey) : null,
+    end: endOfBusinessDay(endKey),
+  };
+}
+
+/**
+ * Adds calendar days to a 'YYYY-MM-DD' key. Pure calendar arithmetic, so no
+ * timezone is involved and no DST can shift the result.
+ * @param {string} dayKey
+ * @param {number} days
+ * @returns {string} 'YYYY-MM-DD'
+ */
+export function addBusinessDays(dayKey, days) {
+  const [y, m, d] = dayKey.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}

@@ -29,8 +29,11 @@ import { eq, and, gte, lte, desc, sql } from 'drizzle-orm';
 import { startOfBusinessDay, endOfBusinessDay } from '#utils/businessDay.js';
 import { db } from '#config/database.js';
 import { records, record_items } from '#models/record.model.js';
-import { wallets } from '#models/myWallet.model.js';
 import { sales } from '#models/sales.model.js';
+import {
+  spendTokens,
+  InsufficientTokensError,
+} from '#services/tokenLots.service.js';
 import logger from '#config/logger.js';
 import { mergeFinancialRecords, applyRecordFilters } from '#utils/recordAggregation.js';
 import { getStatementFinancials } from '#services/sales.service.js';
@@ -55,6 +58,7 @@ export async function createRecord(
     description = null,
     product_id = null,
     credit_due_date = null,
+    credit_status = type === 'credit' ? 'pending' : null,
   },
   trx = null
 ) {
@@ -86,20 +90,24 @@ export async function createRecord(
     const client = trx || db;
 
     const runCreate = async clientInstance => {
-      const [wallet] = await clientInstance
-        .select()
-        .from(wallets)
-        .where(eq(wallets.business_id, business_id))
-        .limit(1);
-
-      if (!wallet || wallet.balance_tokens < 1) {
-        throw new Error('Insufficient tokens. Please purchase tokens to create records.');
+      // Charge one token from the soonest-expiring lot, in this transaction.
+      // The wallet row lock makes two simultaneous creates unable to both
+      // spend the last token.
+      try {
+        await spendTokens(clientInstance, {
+          businessId: business_id,
+          amount: 1,
+          type: 'charge',
+          reference: reference_id ?? null,
+          note: `Record created (${type})`,
+          createdBy: user_id,
+        });
+      } catch (e) {
+        if (e instanceof InsufficientTokensError) {
+          throw new Error('Insufficient tokens. Please purchase tokens to create records.');
+        }
+        throw e;
       }
-
-      await clientInstance
-        .update(wallets)
-        .set({ balance_tokens: wallet.balance_tokens - 1, updated_at: new Date() })
-        .where(eq(wallets.business_id, business_id));
 
       const [newRecord] = await clientInstance
         .insert(records)
@@ -119,7 +127,7 @@ export async function createRecord(
           mpesa_transaction_date: mpesa_data?.transactionDate ? new Date(mpesa_data.transactionDate) : null,
           mpesa_transaction_id: mpesa_data?.transactionId || null,
           credit_due_date: credit_due_date ? new Date(credit_due_date) : null,
-          credit_status: type === 'credit' ? 'pending' : null,
+          credit_status,
           token_deducted: 1,
           revenue_guard_reference: `RG-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           reference_id,
@@ -183,7 +191,28 @@ export async function getRecordById(business_id, record_id) {
       throw new Error('Record not found');
     }
 
-    const items = await db.select().from(record_items).where(eq(record_items.record_id, record_id));
+    const items = await db
+      .select({
+        id: record_items.id,
+        record_id: record_items.record_id,
+        item_name: record_items.item_name,
+        description: record_items.description,
+        quantity: record_items.quantity,
+        unit_price: record_items.unit_price,
+        total_amount: record_items.total_amount,
+        product_id: record_items.product_id,
+        stock_batch_id: record_items.stock_batch_id,
+        cost_per_unit: record_items.cost_per_unit,
+        created_at: record_items.created_at,
+      })
+      .from(record_items)
+      .innerJoin(records, eq(record_items.record_id, records.id))
+      .where(
+        and(
+          eq(record_items.record_id, record.id),
+          eq(records.business_id, business_id)
+        )
+      );
 
     return {
       ...record,
@@ -393,7 +422,7 @@ export async function processM2PesaCallback(business_id, mpesa_transaction_id) {
         callback_processed: true,
         updated_at: new Date(),
       })
-      .where(eq(records.id, record.id))
+      .where(and(eq(records.id, record.id), eq(records.business_id, business_id)))
       .returning();
 
     logger.info('M-Pesa callback processed', {

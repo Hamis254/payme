@@ -132,7 +132,7 @@ const scanHirePurchaseDue = async () => {
         agreement_id: row.installment_id,
         installment_number: row.installment_number,
         amount_due: Number(row.amount_due),
-        due_date: row.due_date.toISOString().slice(0, 10),
+        due_date: row.due_date,
         customer_name: row.customer_name,
         days_overdue: Number(row.days_overdue) || 0,
       }),

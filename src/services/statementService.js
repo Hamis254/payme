@@ -48,10 +48,11 @@ import { fileURLToPath } from 'url';
 import logger from '#config/logger.js';
 import { getStatementFinancials } from '#services/sales.service.js';
 import {
-  startOfBusinessDay,
-  endOfBusinessDay,
   businessDayKey,
+  resolveStatementRange,
+  toBusinessDayKey,
 } from '#utils/businessDay.js';
+import { formatAccountAge } from '#utils/formatAccountAge.js';
 import { db } from '#config/database.js';
 import {
   statementAuditLogs,
@@ -189,39 +190,35 @@ function validateStatementRequest(businessId, startDate, endDate, statementType)
     );
   }
 
-  // Nairobi day bounds rather than UTC midnight — see utils/businessDay.js.
-  // new Date('YYYY-MM-DD') resolves to 03:00 local, so the range used to end
-  // three hours into the final day and drop the rest of it from the PDF. The
-  // on-screen preview resolves its dates through the same helpers, which is
-  // what keeps the two documents agreeing.
-  const parsedStart = startDate ? startOfBusinessDay(startDate) : null;
+  // Dates are checked as Nairobi days, not Date objects. A bare 'YYYY-MM-DD'
+  // coerced to Date lands on 03:00 Nairobi and drops the rest of the final
+  // day from the PDF. The window is resolved below by resolveStatementRange,
+  // the same resolver the on-screen preview uses, so the two cover identical
+  // days.
+  const startKey = toBusinessDayKey(startDate);
   if (!startDate) {
     problems.push('A start date is required to generate a statement.');
-  } else if (isNaN(parsedStart?.getTime())) {
+  } else if (!startKey) {
     problems.push(
       `Invalid start date: "${startDate}". Expected a valid date (e.g. 2026-01-01).`
     );
   }
 
-  const parsedEnd = endDate
-    ? endOfBusinessDay(endDate)
-    : endOfBusinessDay(businessDayKey());
-  if (endDate && isNaN(parsedEnd.getTime())) {
+  const endKey = endDate ? toBusinessDayKey(endDate) : null;
+  if (endDate && !endKey) {
     problems.push(
       `Invalid end date: "${endDate}". Expected a valid date (e.g. 2026-06-30).`
     );
   }
 
-  if (
-    parsedStart &&
-    !isNaN(parsedStart.getTime()) &&
-    !isNaN(parsedEnd.getTime()) &&
-    parsedStart.getTime() > parsedEnd.getTime()
-  ) {
+  // An end date after today is clamped to today, so the start must be
+  // compared against that clamped end.
+  const todayKey = businessDayKey();
+  const effectiveEndKey = !endKey || endKey > todayKey ? todayKey : endKey;
+  if (startKey && effectiveEndKey && startKey > effectiveEndKey) {
     problems.push(
-      `Start date (${parsedStart.toISOString().split('T')[0]}) cannot be ` +
-        `after end date (${parsedEnd.toISOString().split('T')[0]}). Swap the ` +
-        'two dates or widen the range.'
+      `Start date (${startKey}) cannot be after end date (${effectiveEndKey}). ` +
+        'Swap the two dates or widen the range.'
     );
   }
 
@@ -240,7 +237,8 @@ function validateStatementRequest(businessId, startDate, endDate, statementType)
     );
   }
 
-  return { parsedStart, parsedEnd };
+  const { start, end } = resolveStatementRange(startDate, endDate);
+  return { parsedStart: start, parsedEnd: end };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -933,6 +931,9 @@ export async function generateBusinessStatement(
       email: owner?.email || '—',
       owner_name: owner?.name || owner?.email || '—',
       logo_url: business.logo_url || null,
+      business_code: business.business_code,
+      member_since: formatDate(owner?.created_at),
+      account_age: formatAccountAge(owner?.created_at, new Date()),
 
       // Payment collection identity — sourced from payment_configs, the
       // actual STK push destination set up at onboarding.

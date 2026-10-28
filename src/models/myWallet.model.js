@@ -5,6 +5,7 @@ import {
   varchar,
   timestamp,
   decimal,
+  numeric,
   text,
 } from 'drizzle-orm/pg-core';
 import { businesses } from '#models/setting.model.js';
@@ -26,7 +27,13 @@ export const wallets = pgTable('wallets', {
     .notNull()
     .unique()
     .references(() => businesses.id, { onDelete: 'cascade' }),
-  balance_tokens: integer('balance_tokens').notNull().default(0),
+  balance_tokens: numeric('balance_tokens', {
+    precision: 12,
+    scale: 2,
+    mode: 'number',
+  })
+    .notNull()
+    .default(0),
   created_at: timestamp('created_at').defaultNow().notNull(),
   updated_at: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -37,7 +44,11 @@ export const walletTransactions = pgTable('wallet_transactions', {
   business_id: integer('business_id')
     .notNull()
     .references(() => businesses.id, { onDelete: 'cascade' }),
-  change_tokens: integer('change_tokens').notNull(), // positive for topup, negative for charge
+  change_tokens: numeric('change_tokens', {
+    precision: 12,
+    scale: 2,
+    mode: 'number',
+  }).notNull(), // positive for topup, negative for charge
   type: varchar('type', { length: 50 }).notNull(), // purchase | reserve | charge | refund
   reference: varchar('reference', { length: 255 }), // sale_id, payment_id, etc
   note: text('note'),
@@ -52,7 +63,11 @@ export const tokenPurchases = pgTable('token_purchases', {
     .notNull()
     .references(() => businesses.id, { onDelete: 'cascade' }),
   package_type: varchar('package_type', { length: 50 }).notNull(), // '30', '70', '150', '400', '850'
-  tokens_purchased: integer('tokens_purchased').notNull(),
+  tokens_purchased: numeric('tokens_purchased', {
+    precision: 12,
+    scale: 2,
+    mode: 'number',
+  }).notNull(),
   amount_paid: decimal('amount_paid', { precision: 12, scale: 2 }).notNull(),
   payment_method: varchar('payment_method', { length: 20 }).notNull(), // mpesa | cash
 

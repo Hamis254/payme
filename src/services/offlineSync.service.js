@@ -6,6 +6,7 @@ import {
   offlineConfig,
 } from '#models/offlineQueue.model.js';
 import { eq, and, desc, asc, lte, lt } from 'drizzle-orm';
+import { NotFoundError } from '#middleware/errorHandler.middleware.js';
 
 /**
  * Add operation to offline queue
@@ -88,18 +89,23 @@ export const getPendingOperations = async (businessId, options = {}) => {
  * Sync a single operation with the server
  * Handles conflict resolution
  */
-export const syncOperation = async (queueId, serverResponse) => {
+export const syncOperation = async (queueId, serverResponse, userId = null) => {
   logger.info('Syncing offline operation', { queueId });
+  let operationFound = false;
+  const operationFilter = userId
+    ? and(eq(offlineQueue.id, queueId), eq(offlineQueue.user_id, userId))
+    : eq(offlineQueue.id, queueId);
 
   try {
     const [operation] = await db
       .select()
       .from(offlineQueue)
-      .where(eq(offlineQueue.id, queueId));
+      .where(operationFilter);
 
     if (!operation) {
-      throw new Error(`Operation not found: ${queueId}`);
+      throw new NotFoundError('Operation not found');
     }
+    operationFound = true;
 
     // Check for conflicts
     const conflict = detectConflict(operation, serverResponse);
@@ -110,7 +116,7 @@ export const syncOperation = async (queueId, serverResponse) => {
         conflictType: conflict.type,
         conflictData: conflict.data,
         resolutionStrategy: 'manual',
-      });
+      }, userId);
     }
 
     // Sync successful
@@ -123,7 +129,7 @@ export const syncOperation = async (queueId, serverResponse) => {
         synced_at: new Date(),
         sync_attempts: operation.sync_attempts + 1,
       })
-      .where(eq(offlineQueue.id, queueId));
+      .where(operationFilter);
 
     // Record sync history
     await recordSyncHistory(queueId, 'success', serverResponse);
@@ -132,7 +138,9 @@ export const syncOperation = async (queueId, serverResponse) => {
     return { success: true, queueId };
   } catch (error) {
     logger.error('Error syncing operation', error);
-    await recordSyncHistory(queueId, 'failed', { error: error.message });
+    if (operationFound) {
+      await recordSyncHistory(queueId, 'failed', { error: error.message });
+    }
     throw error;
   }
 };
@@ -211,7 +219,7 @@ const detectConflict = (localOperation, serverResponse) => {
 /**
  * Resolve conflict using specified strategy
  */
-export const resolveConflict = async (queueId, strategy) => {
+export const resolveConflict = async (queueId, strategy, userId = null) => {
   const validStrategies = ['client_wins', 'server_wins', 'merge', 'manual'];
   if (!validStrategies.includes(strategy)) {
     throw new Error(`Invalid resolution strategy: ${strategy}`);
@@ -220,6 +228,19 @@ export const resolveConflict = async (queueId, strategy) => {
   logger.info('Resolving conflict', { queueId, strategy });
 
   try {
+    const operationFilter = userId
+      ? and(eq(offlineQueue.id, queueId), eq(offlineQueue.user_id, userId))
+      : eq(offlineQueue.id, queueId);
+    const [operation] = await db
+      .select({ id: offlineQueue.id })
+      .from(offlineQueue)
+      .where(operationFilter)
+      .limit(1);
+
+    if (!operation) {
+      throw new NotFoundError('Operation not found');
+    }
+
     await db
       .update(offlineQueue)
       .set({
@@ -227,7 +248,7 @@ export const resolveConflict = async (queueId, strategy) => {
         resolved_at: new Date(),
         status: strategy === 'client_wins' ? 'pending' : 'synced',
       })
-      .where(eq(offlineQueue.id, queueId));
+      .where(operationFilter);
 
     logger.info('Conflict resolved', { queueId, strategy });
     return { success: true, queueId };
@@ -384,7 +405,12 @@ const handleSyncFailure = async (queueId, error) => {
 /**
  * Update operation status
  */
-const updateOperationStatus = async (queueId, status, additionalData = {}) => {
+const updateOperationStatus = async (
+  queueId,
+  status,
+  additionalData = {},
+  userId = null
+) => {
   const updateData = {
     status,
     ...additionalData,
@@ -398,10 +424,14 @@ const updateOperationStatus = async (queueId, status, additionalData = {}) => {
     updateData.resolution_strategy = additionalData.resolutionStrategy;
   }
 
+  const operationFilter = userId
+    ? and(eq(offlineQueue.id, queueId), eq(offlineQueue.user_id, userId))
+    : eq(offlineQueue.id, queueId);
+
   await db
     .update(offlineQueue)
     .set(updateData)
-    .where(eq(offlineQueue.id, queueId));
+    .where(operationFilter);
 };
 
 /**
@@ -580,8 +610,21 @@ export const updateOfflineConfig = async (businessId, updates) => {
 /**
  * Get sync history for operation
  */
-export const getSyncHistory = async (queueId, limit = 10) => {
+export const getSyncHistory = async (queueId, userId, limit = 10) => {
   try {
+    const [operation] = await db
+      .select({ id: offlineQueue.id })
+      .from(offlineQueue)
+      .where(
+        and(
+          eq(offlineQueue.id, queueId),
+          eq(offlineQueue.user_id, userId)
+        )
+      )
+      .limit(1);
+
+    if (!operation) return null;
+
     const history = await db
       .select()
       .from(offlineSyncHistory)

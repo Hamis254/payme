@@ -702,8 +702,8 @@ export async function getWalletStats(businessId) {
 
     return {
       current_balance: wallet?.balance || 0,
-      total_tokens_purchased: parseInt(purchased?.total || 0, 10),
-      total_tokens_spent: parseInt(spent?.total || 0, 10),
+      total_tokens_purchased: Number(purchased?.total || 0),
+      total_tokens_spent: Number(spent?.total || 0),
       transaction_count: txCount?.count || 0,
     };
   } catch (error) {

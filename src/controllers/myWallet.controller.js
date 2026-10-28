@@ -98,13 +98,12 @@ export const initiateTokenPurchaseHandler = async (req, res, next) => {
       });
     }
 
-    const { packageType, phone } = validationResult.data;
+    const { packageType, amount, phone } = validationResult.data;
 
     const result = await initiateTokenPurchase(
       req.user.id,
       businessId,
-      packageType,
-      phone
+      { packageType, amount, phone }
     );
 
     res.status(201).json({

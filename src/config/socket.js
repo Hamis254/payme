@@ -9,10 +9,10 @@ let socketAvailable = false;
 export const initializeSocket = async server => {
   try {
     // Try to dynamically import socket.io
-    let SocketIO;
+    let SocketIOServer;
     try {
       const module = await import('socket.io');
-      SocketIO = module.default;
+      SocketIOServer = module.Server;
     } catch {
       // socket.io not installed - disable real-time notifications
       logger.warn('socket.io not installed - real-time notifications disabled');
@@ -20,16 +20,13 @@ export const initializeSocket = async server => {
     }
 
     // If socket.io not available, skip initialization
-    if (!SocketIO) {
+    if (!SocketIOServer) {
       logger.warn(
         'socket.io module not found - real-time notifications disabled'
       );
       return;
     }
-
-    const { Server } = SocketIO;
-
-    io = new Server(server, {
+    io = new SocketIOServer(server, {
       cors: {
         origin: process.env.CORS_ORIGIN || '*',
         methods: ['GET', 'POST'],

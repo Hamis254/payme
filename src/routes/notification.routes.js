@@ -8,10 +8,14 @@ import {
   getPreferences,
   updatePreferences,
   testNotification,
+  registerDeviceToken,
+  deleteDeviceToken,
 } from '#controllers/notification.controller.js';
 import {
   updatePreferencesSchema,
   testNotificationSchema,
+  deviceTokenSchema,
+  deleteDeviceTokenSchema,
 } from '#validations/notification.validation.js';
 
 const router = express.Router();
@@ -27,6 +31,19 @@ const restrictTestNotificationRoute = (_req, res, next) => {
 };
 
 // ============ AUTHENTICATION REQUIRED ============
+
+router.post(
+  '/device-token',
+  authenticateToken,
+  validateRequest(deviceTokenSchema),
+  registerDeviceToken
+);
+router.delete(
+  '/device-token',
+  authenticateToken,
+  validateRequest(deleteDeviceTokenSchema),
+  deleteDeviceToken
+);
 
 // Get all notifications for user
 router.get('/', authenticateToken, getUserNotifications);

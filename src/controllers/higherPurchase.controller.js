@@ -23,6 +23,7 @@ import {
   hirePurchaseQuerySchema,
 } from '#validations/higherPurchase.validation.js';
 import { formatValidationError } from '#utils/format.js';
+import { emitNotification, notifications } from '#utils/notificationEmitter.js';
 
 async function assertBusinessOwnership(userId, businessId) {
   const [business] = await db
@@ -60,6 +61,22 @@ export async function createAgreementHandler(req, res, next) {
 
     const result = await createAgreement(validationResult.data);
 
+    emitNotification({
+      user_id: req.user.id,
+      business_id: businessId,
+      ...notifications.hpAgreementCreated({
+        agreement_id: result.agreement.id,
+        amount: Number(result.agreement.total_amount),
+        business_id: businessId,
+        customer_name: result.agreement.customer_name,
+      }),
+    }).catch(error =>
+      logger.error('Failed to emit hire-purchase agreement notification', {
+        agreementId: result.agreement.id,
+        error: error.message,
+      })
+    );
+
     logger.info(`Hire purchase agreement created by user ${req.user.id}`, {
       agreementId: result.agreement.id,
       businessId: req.params.businessId,
@@ -96,9 +113,12 @@ export async function getAgreementHandler(req, res, next) {
     const { businessId, agreementId } = req.params;
     await assertBusinessOwnership(req.user.id, parseInt(businessId));
 
-    const agreement = await getAgreementById(parseInt(agreementId));
+    const agreement = await getAgreementById(
+      parseInt(agreementId),
+      parseInt(businessId)
+    );
 
-    if (!agreement || agreement.business_id !== parseInt(businessId)) {
+    if (!agreement) {
       return res.status(404).json({
         error: 'Agreement not found',
       });
@@ -178,7 +198,29 @@ export async function recordPaymentHandler(req, res, next) {
       });
     }
 
-    const result = await recordInstallmentPayment(validationResult.data);
+    const result = await recordInstallmentPayment({
+      ...validationResult.data,
+      businessId: parseInt(req.params.businessId),
+      userId: req.user.id,
+    });
+
+    emitNotification({
+      user_id: req.user.id,
+      business_id: parseInt(req.params.businessId),
+      ...notifications.hpInstallmentReceived({
+        payment_id: result.paymentRow.id,
+        agreement_id: result.agreement.id,
+        amount: validationResult.data.amountPaid,
+        installment_number: result.installment.installment_number,
+        balance_remaining: Number(result.agreement.balance_remaining),
+        business_id: parseInt(req.params.businessId),
+      }),
+    }).catch(error =>
+      logger.error('Failed to emit hire-purchase installment notification', {
+        paymentId: result.paymentRow.id,
+        error: error.message,
+      })
+    );
 
     logger.info(`Installment payment recorded by user ${req.user.id}`, {
       installmentId: result.installment.id,
@@ -197,10 +239,17 @@ export async function recordPaymentHandler(req, res, next) {
         payment_date: result.installment.payment_date,
       },
       agreement_balance: parseFloat(result.agreement.balance_remaining),
+      tokens_remaining: req.revenueGuard.balance_before - 1,
       request_id: req.id,
     });
   } catch (e) {
     logger.error('Error recording payment:', e);
+    if (e.message?.includes('Insufficient tokens')) {
+      return res.status(402).json({
+        error: e.message,
+        code: 'PAYMENT_REQUIRED',
+      });
+    }
     next(e);
   }
 }
@@ -287,9 +336,16 @@ export async function getSummaryHandler(req, res, next) {
 export async function getPaymentHistoryHandler(req, res, next) {
   try {
     await assertBusinessOwnership(req.user.id, parseInt(req.params.businessId));
-    const { agreementId } = req.params;
+    const { agreementId, businessId } = req.params;
 
-    const history = await getPaymentHistory(parseInt(agreementId));
+    const history = await getPaymentHistory(
+      parseInt(agreementId),
+      parseInt(businessId)
+    );
+
+    if (!history) {
+      return res.status(404).json({ error: 'Agreement not found' });
+    }
 
     return res.status(200).json({
       success: true,
@@ -318,7 +374,7 @@ export async function updateStatusHandler(req, res, next) {
       });
     }
 
-    const { agreementId } = req.params;
+    const { agreementId, businessId } = req.params;
     const { status } = validationResult.data;
 
     if (!status) {
@@ -327,7 +383,15 @@ export async function updateStatusHandler(req, res, next) {
       });
     }
 
-    const updated = await updateAgreementStatus(parseInt(agreementId), status);
+    const updated = await updateAgreementStatus(
+      parseInt(agreementId),
+      parseInt(businessId),
+      status
+    );
+
+    if (!updated) {
+      return res.status(404).json({ error: 'Agreement not found' });
+    }
 
     logger.info(
       `Agreement ${agreementId} status updated to ${status} by user ${req.user.id}`

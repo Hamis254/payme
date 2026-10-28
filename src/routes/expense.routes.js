@@ -22,9 +22,9 @@ const router = express.Router();
  */
 router.post(
   '/:businessId/record',
-  offlineQueueMiddleware('expense'),
   authenticateToken,
   validateBusinessId('params'),
+  offlineQueueMiddleware('expense'),
   recordExpenseHandler
 );
 

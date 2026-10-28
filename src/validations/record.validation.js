@@ -7,6 +7,57 @@
  */
 
 import { z } from 'zod';
+import { toBusinessDayKey } from '#utils/businessDay.js';
+
+const BUSINESS_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+// Full ISO datetimes must carry an offset, so the instant is unambiguous.
+const ISO_DATETIME_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+
+function isValidBusinessDate(value) {
+  if (BUSINESS_DATE_PATTERN.test(value)) {
+    // Reject impossible calendar days such as 2026-02-30.
+    const [y, m, d] = value.split('-').map(Number);
+    const probe = new Date(Date.UTC(y, m - 1, d));
+    return (
+      probe.getUTCFullYear() === y &&
+      probe.getUTCMonth() === m - 1 &&
+      probe.getUTCDate() === d
+    );
+  }
+  return ISO_DATETIME_PATTERN.test(value) && !isNaN(Date.parse(value));
+}
+
+/**
+ * A calendar day for statements and reports: 'YYYY-MM-DD', or a full ISO
+ * datetime (reduced to its Nairobi day downstream).
+ *
+ * Deliberately a string, not z.coerce.date(). Coercion turns a bare day into
+ * UTC midnight, which is 03:00 in Nairobi, and the end-of-day helper then
+ * passes that Date through, so the last trading day is lost.
+ */
+export const businessDateSchema = z
+  .string()
+  .trim()
+  .refine(isValidBusinessDate, 'Expected a date as YYYY-MM-DD (or an ISO datetime)');
+
+/**
+ * Cross-field check shared by the ranged schemas. Compares Nairobi days, so
+ * '2026-07-20' and '2026-07-20T23:30:00+03:00' are the same day.
+ */
+const startNotAfterEnd = data =>
+  !data.start_date ||
+  !data.end_date ||
+  toBusinessDayKey(data.start_date) <= toBusinessDayKey(data.end_date);
+
+const checkStartNotAfterEnd = (data, ctx) => {
+  if (startNotAfterEnd(data)) return;
+  ctx.addIssue({
+    code: 'custom',
+    message: `end_date (${toBusinessDayKey(data.end_date)}) cannot be before start_date (${toBusinessDayKey(data.start_date)}).`,
+    path: ['end_date'],
+  });
+};
 
 /**
  * LINE ITEM SCHEMA: For itemized records
@@ -126,8 +177,8 @@ export const createRecordSchema = z.union([
 export const queryRecordsSchema = z.object({
   type: z.enum(['sales', 'hp', 'credit', 'inventory', 'expense']).optional(),
   payment_method: z.enum(['cash', 'mpesa']).optional(),
-  start_date: z.coerce.date().optional(),
-  end_date: z.coerce.date().optional(),
+  start_date: businessDateSchema.optional(),
+  end_date: businessDateSchema.optional(),
   limit: z.coerce.number().positive().max(500).default(100),
   offset: z.coerce.number().nonnegative().default(0),
 });
@@ -136,9 +187,21 @@ export const queryRecordsSchema = z.object({
  * DATE RANGE SCHEMA (For statements)
  */
 export const dateRangeSchema = z.object({
-  start_date: z.coerce.date(),
-  end_date: z.coerce.date().optional(),
+  start_date: businessDateSchema,
+  end_date: businessDateSchema.optional(),
 });
+
+/**
+ * STATEMENT PREVIEW SCHEMA (GET /api/records/:business_id/statement-preview)
+ * Both edges optional. The service defaults start to today and end to today,
+ * and clamps an end date in the future to today.
+ */
+export const statementRangeSchema = z
+  .object({
+    start_date: businessDateSchema.optional(),
+    end_date: businessDateSchema.optional(),
+  })
+  .superRefine(checkStartNotAfterEnd);
 
 /**
  * DASHBOARD INSIGHTS SCHEMA
@@ -158,17 +221,11 @@ export const dashboardInsightsSchema = z.object({
 export const generateStatementSchema = z
   .object({
     business_id: z.number().positive(),
-    start_date: z.coerce.date(),
-    end_date: z.coerce.date().optional(),
+    start_date: businessDateSchema,
+    end_date: businessDateSchema.optional(),
     statement_type: z.enum(['summary', 'full']).default('full'),
   })
-  .refine(
-    data => !data.end_date || data.end_date >= data.start_date,
-    data => ({
-      message: `end_date (${data.end_date?.toISOString().split('T')[0]}) cannot be before start_date (${data.start_date.toISOString().split('T')[0]}).`,
-      path: ['end_date'],
-    })
-  );
+  .superRefine(checkStartNotAfterEnd);
 
 export default {
   createRecordSchema,
@@ -181,5 +238,7 @@ export default {
   dateRangeSchema,
   dashboardInsightsSchema,
   generateStatementSchema,
+  statementRangeSchema,
+  businessDateSchema,
   recordItemSchema,
 };

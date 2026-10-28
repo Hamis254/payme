@@ -1,5 +1,8 @@
 import logger from '#config/logger.js';
 import { notificationService } from '#services/notification.service.js';
+import { db } from '#config/database.js';
+import { deviceTokens } from '#models/deviceToken.model.js';
+import { and, eq } from 'drizzle-orm';
 
 // ============ NOTIFICATION CONTROLLERS ============
 
@@ -175,6 +178,58 @@ export const testNotification = async (req, res) => {
     return res.status(500).json({
       error: 'Failed to send test notification',
       message: e.message,
+    });
+  }
+};
+
+export const registerDeviceToken = async (req, res) => {
+  try {
+    const { token, platform } = req.body;
+    await db
+      .insert(deviceTokens)
+      .values({
+        user_id: req.user.id,
+        token,
+        platform,
+        last_seen_at: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: deviceTokens.token,
+        set: {
+          user_id: req.user.id,
+          platform,
+          last_seen_at: new Date(),
+        },
+      });
+
+    return res.status(200).json({ message: 'Device token registered' });
+  } catch (error) {
+    logger.error('Error registering device token', error);
+    return res.status(500).json({
+      error: 'Failed to register device token',
+      message: error.message,
+    });
+  }
+};
+
+export const deleteDeviceToken = async (req, res) => {
+  try {
+    const { token } = req.body;
+    await db
+      .delete(deviceTokens)
+      .where(
+        and(
+          eq(deviceTokens.user_id, req.user.id),
+          eq(deviceTokens.token, token)
+        )
+      );
+
+    return res.status(200).json({ message: 'Device token deleted' });
+  } catch (error) {
+    logger.error('Error deleting device token', error);
+    return res.status(500).json({
+      error: 'Failed to delete device token',
+      message: error.message,
     });
   }
 };

@@ -38,10 +38,22 @@ import {
   hirePurchaseInstallments,
   hirePurchaseInstallmentPayments,
 } from '#models/higherPurchase.model.js';
-import { and, eq, gte, lte, desc, ne, inArray, sql as sqlOp } from 'drizzle-orm';
+import {
+  and,
+  eq,
+  exists,
+  gte,
+  lte,
+  desc,
+  ne,
+  inArray,
+  sql as sqlOp,
+} from 'drizzle-orm';
 import logger from '#config/logger.js';
+import { NotFoundError } from '#middleware/errorHandler.middleware.js';
 import { calculateHPPayment } from '#services/financialCalculations.js';
 import { deductStockFIFO, releaseStockReservation } from '#services/stock.service.js';
+import * as recordService from '#services/record.service.js';
 
 const round2 = n => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
@@ -234,11 +246,22 @@ export async function createAgreement(data, trx = null) {
             status: progress.fully_paid ? 'completed' : 'active',
             updated_at: new Date(),
           })
-          .where(eq(hirePurchaseAgreements.id, agreement.id))
+          .where(
+            and(
+              eq(hirePurchaseAgreements.id, agreement.id),
+              eq(hirePurchaseAgreements.business_id, businessId)
+            )
+          )
           .returning();
 
         if (progress.should_deduct_stock) {
-          await finalizeAgreementStockDeduction(tx, agreement.id, saleId, estimatedCost);
+          await finalizeAgreementStockDeduction(
+            tx,
+            agreement.id,
+            businessId,
+            saleId,
+            estimatedCost
+          );
         }
       }
 
@@ -264,20 +287,49 @@ export async function createAgreement(data, trx = null) {
 /**
  * Get a single agreement with its installment schedule. Unchanged.
  */
-export async function getAgreementById(agreementId) {
+export async function getAgreementById(agreementId, businessId) {
   try {
     const agreement = await db
       .select()
       .from(hirePurchaseAgreements)
-      .where(eq(hirePurchaseAgreements.id, agreementId))
+      .where(
+        and(
+          eq(hirePurchaseAgreements.id, agreementId),
+          eq(hirePurchaseAgreements.business_id, businessId)
+        )
+      )
       .limit(1);
 
     if (!agreement.length) return null;
 
     const installments = await db
-      .select()
+      .select({
+        id: hirePurchaseInstallments.id,
+        agreement_id: hirePurchaseInstallments.agreement_id,
+        installment_number: hirePurchaseInstallments.installment_number,
+        due_date: hirePurchaseInstallments.due_date,
+        amount_due: hirePurchaseInstallments.amount_due,
+        amount_paid: hirePurchaseInstallments.amount_paid,
+        payment_date: hirePurchaseInstallments.payment_date,
+        status: hirePurchaseInstallments.status,
+        payment_method: hirePurchaseInstallments.payment_method,
+        mpesa_transaction_id: hirePurchaseInstallments.mpesa_transaction_id,
+        late_fee_charged: hirePurchaseInstallments.late_fee_charged,
+        days_overdue: hirePurchaseInstallments.days_overdue,
+        created_at: hirePurchaseInstallments.created_at,
+        updated_at: hirePurchaseInstallments.updated_at,
+      })
       .from(hirePurchaseInstallments)
-      .where(eq(hirePurchaseInstallments.agreement_id, agreementId))
+      .innerJoin(
+        hirePurchaseAgreements,
+        eq(hirePurchaseInstallments.agreement_id, hirePurchaseAgreements.id)
+      )
+      .where(
+        and(
+          eq(hirePurchaseInstallments.agreement_id, agreementId),
+          eq(hirePurchaseAgreements.business_id, businessId)
+        )
+      )
       .orderBy(hirePurchaseInstallments.installment_number);
 
     return {
@@ -523,23 +575,48 @@ export async function getHirePurchaseSalesForBusiness(businessId, params = {}) {
  */
 export async function recordInstallmentPayment(data) {
   try {
-    const { agreementId, installmentId, amountPaid, paymentMethod, mpesaTransactionId, paymentDate } = data;
+    const {
+      agreementId,
+      businessId,
+      userId,
+      installmentId,
+      amountPaid,
+      paymentMethod,
+      mpesaTransactionId,
+      paymentDate,
+    } = data;
     const payment = round2(parseFloat(amountPaid));
 
     const result = await db.transaction(async tx => {
-      const [installment] = await tx
-        .select()
-        .from(hirePurchaseInstallments)
-        .where(eq(hirePurchaseInstallments.id, installmentId))
-        .limit(1);
-      if (!installment) throw new Error('Installment not found');
-
       const [agreement] = await tx
         .select()
         .from(hirePurchaseAgreements)
-        .where(eq(hirePurchaseAgreements.id, agreementId))
+        .where(
+          and(
+            eq(hirePurchaseAgreements.id, agreementId),
+            eq(hirePurchaseAgreements.business_id, businessId)
+          )
+        )
         .limit(1);
-      if (!agreement) throw new Error('Agreement not found');
+      if (!agreement) throw new NotFoundError('Agreement not found');
+      if (agreement.business_id !== businessId) {
+        throw new NotFoundError('Agreement not found');
+      }
+
+      const [installment] = await tx
+        .select()
+        .from(hirePurchaseInstallments)
+        .where(
+          and(
+            eq(hirePurchaseInstallments.id, installmentId),
+            eq(hirePurchaseInstallments.agreement_id, agreementId)
+          )
+        )
+        .limit(1);
+      if (!installment) throw new NotFoundError('Installment not found');
+      if (installment.agreement_id !== agreementId) {
+        throw new NotFoundError('Installment not found');
+      }
 
       const totalAmount = Number(agreement.total_amount);
 
@@ -584,23 +661,31 @@ export async function recordInstallmentPayment(data) {
           status: newStatus,
           updated_at: new Date(),
         })
-        .where(eq(hirePurchaseInstallments.id, installmentId))
+        .where(
+          and(
+            eq(hirePurchaseInstallments.id, installmentId),
+            eq(hirePurchaseInstallments.agreement_id, agreementId)
+          )
+        )
         .returning();
 
       // Append-only payment event — this is what getStatementFinancials
       // reads from, so partial-payment history is never overwritten the
       // way it would be if only the row above were updated.
-      await tx.insert(hirePurchaseInstallmentPayments).values({
-        agreement_id: agreementId,
-        installment_id: installmentId,
-        payment_type: 'installment',
-        amount: String(payment),
-        payment_method: paymentMethod,
-        mpesa_transaction_id: mpesaTransactionId || null,
-        cost_recovered: String(progress.cost_recovered_this_payment),
-        profit_realized: String(progress.profit_realized_this_payment),
-        payment_date: new Date(paymentDate || new Date()),
-      });
+      const [paymentRow] = await tx
+        .insert(hirePurchaseInstallmentPayments)
+        .values({
+          agreement_id: agreementId,
+          installment_id: installmentId,
+          payment_type: 'installment',
+          amount: String(payment),
+          payment_method: paymentMethod,
+          mpesa_transaction_id: mpesaTransactionId || null,
+          cost_recovered: String(progress.cost_recovered_this_payment),
+          profit_realized: String(progress.profit_realized_this_payment),
+          payment_date: new Date(paymentDate || new Date()),
+        })
+        .returning();
 
       const newInstallmentsPaid = newStatus === 'paid' ? agreement.installments_paid + 1 : agreement.installments_paid;
 
@@ -612,14 +697,44 @@ export async function recordInstallmentPayment(data) {
           status: progress.fully_paid ? 'completed' : 'active',
           updated_at: new Date(),
         })
-        .where(eq(hirePurchaseAgreements.id, agreementId))
+        .where(
+          and(
+            eq(hirePurchaseAgreements.id, agreementId),
+            eq(hirePurchaseAgreements.business_id, businessId)
+          )
+        )
         .returning();
 
       if (progress.should_deduct_stock) {
-        await finalizeAgreementStockDeduction(tx, agreementId, agreement.sale_id, estimatedCost);
+        await finalizeAgreementStockDeduction(
+          tx,
+          agreementId,
+          businessId,
+          agreement.sale_id,
+          estimatedCost
+        );
       }
 
-      return { installment: updatedInstallment, agreement: updatedAgreement };
+      await recordService.createRecord(
+        {
+          business_id: businessId,
+          user_id: userId,
+          type: 'hp',
+          category: 'hp_installment',
+          amount: payment,
+          payment_method: paymentMethod,
+          transaction_date: paymentDate || new Date(),
+          reference_id: `hp-installment-${paymentRow.id}`,
+          description: `Installment #${installment.installment_number} received for agreement #${agreementId}`,
+        },
+        tx
+      );
+
+      return {
+        installment: updatedInstallment,
+        agreement: updatedAgreement,
+        paymentRow,
+      };
     });
 
     logger.info(`Installment payment recorded: ${installmentId}`, {
@@ -646,7 +761,13 @@ export async function recordInstallmentPayment(data) {
  * the most recent payment so cumulative profit_realized across the
  * agreement always foots to (total_amount − real_total_cost) exactly.
  */
-async function finalizeAgreementStockDeduction(tx, agreementId, saleId, estimatedCost) {
+async function finalizeAgreementStockDeduction(
+  tx,
+  agreementId,
+  businessId,
+  saleId,
+  estimatedCost
+) {
   const items = await tx.select().from(saleItems).where(eq(saleItems.sale_id, saleId));
 
   let realTotalCost = 0;
@@ -671,9 +792,27 @@ async function finalizeAgreementStockDeduction(tx, agreementId, saleId, estimate
 
   if (trueUpAmount !== 0) {
     const [lastPaidRow] = await tx
-      .select()
+      .select({
+        id: hirePurchaseInstallmentPayments.id,
+        profit_realized: hirePurchaseInstallmentPayments.profit_realized,
+      })
       .from(hirePurchaseInstallmentPayments)
-      .where(eq(hirePurchaseInstallmentPayments.agreement_id, agreementId))
+      .where(
+        and(
+          eq(hirePurchaseInstallmentPayments.agreement_id, agreementId),
+          exists(
+            tx
+              .select({ id: hirePurchaseAgreements.id })
+              .from(hirePurchaseAgreements)
+              .where(
+                and(
+                  eq(hirePurchaseAgreements.id, hirePurchaseInstallmentPayments.agreement_id),
+                  eq(hirePurchaseAgreements.business_id, businessId)
+                )
+              )
+          )
+        )
+      )
       .orderBy(desc(hirePurchaseInstallmentPayments.payment_date))
       .limit(1);
 
@@ -836,12 +975,17 @@ export async function getStatusDistribution(businessId) {
 /**
  * Update agreement status. Unchanged.
  */
-export async function updateAgreementStatus(agreementId, status) {
+export async function updateAgreementStatus(agreementId, businessId, status) {
   try {
     const [updated] = await db
       .update(hirePurchaseAgreements)
       .set({ status, updated_at: new Date() })
-      .where(eq(hirePurchaseAgreements.id, agreementId))
+      .where(
+        and(
+          eq(hirePurchaseAgreements.id, agreementId),
+          eq(hirePurchaseAgreements.business_id, businessId)
+        )
+      )
       .returning();
 
     logger.info(`Agreement ${agreementId} status updated to ${status}`);
@@ -864,12 +1008,49 @@ export async function updateAgreementStatus(agreementId, status) {
  * ever needs to show individual partial payments rather than per-slot
  * totals — say the word if you want that now.
  */
-export async function getPaymentHistory(agreementId) {
+export async function getPaymentHistory(agreementId, businessId) {
   try {
+    const [agreement] = await db
+      .select({ id: hirePurchaseAgreements.id })
+      .from(hirePurchaseAgreements)
+      .where(
+        and(
+          eq(hirePurchaseAgreements.id, agreementId),
+          eq(hirePurchaseAgreements.business_id, businessId)
+        )
+      )
+      .limit(1);
+
+    if (!agreement) return null;
+
     const result = await db
-      .select()
+      .select({
+        id: hirePurchaseInstallments.id,
+        agreement_id: hirePurchaseInstallments.agreement_id,
+        installment_number: hirePurchaseInstallments.installment_number,
+        due_date: hirePurchaseInstallments.due_date,
+        amount_due: hirePurchaseInstallments.amount_due,
+        amount_paid: hirePurchaseInstallments.amount_paid,
+        payment_date: hirePurchaseInstallments.payment_date,
+        status: hirePurchaseInstallments.status,
+        payment_method: hirePurchaseInstallments.payment_method,
+        mpesa_transaction_id: hirePurchaseInstallments.mpesa_transaction_id,
+        late_fee_charged: hirePurchaseInstallments.late_fee_charged,
+        days_overdue: hirePurchaseInstallments.days_overdue,
+        created_at: hirePurchaseInstallments.created_at,
+        updated_at: hirePurchaseInstallments.updated_at,
+      })
       .from(hirePurchaseInstallments)
-      .where(eq(hirePurchaseInstallments.agreement_id, agreementId))
+      .innerJoin(
+        hirePurchaseAgreements,
+        eq(hirePurchaseInstallments.agreement_id, hirePurchaseAgreements.id)
+      )
+      .where(
+        and(
+          eq(hirePurchaseInstallments.agreement_id, agreementId),
+          eq(hirePurchaseAgreements.business_id, businessId)
+        )
+      )
       .orderBy(hirePurchaseInstallments.installment_number);
 
     return result.map(r => ({

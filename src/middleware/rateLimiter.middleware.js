@@ -28,6 +28,8 @@ const rateLimitStore = new Map();
  * Clean up expired entries every minute
  * Prevents memory leak from stale entries
  */
+// unref(): the cleanup timer must not keep the process alive on its own
+// (tests and graceful shutdown both depend on that).
 setInterval(() => {
   const now = Date.now();
   for (const [key, value] of rateLimitStore.entries()) {
@@ -35,7 +37,7 @@ setInterval(() => {
       rateLimitStore.delete(key);
     }
   }
-}, 60000); // Every 60 seconds
+}, 60000).unref(); // Every 60 seconds
 
 /**
  * Generic rate limiter middleware factory
@@ -200,6 +202,42 @@ export const apiBruteForceLimiter = createRateLimiter({
  *
  * TODO: Implement when Redis is added to production stack
  */
+/**
+ * Branch creation (includes the main-code lookup)
+ * Keyed by user, since the route is authenticated. Stops code enumeration:
+ * 10 attempts per minute per account.
+ */
+export const branchLookupLimiter = createRateLimiter({
+  maxRequests: 10,
+  windowMs: 60 * 1000,
+  endpoint: 'branch_lookup',
+  keyGenerator: req => (req.user?.id ? `user:${req.user.id}` : req.ip),
+});
+
+/**
+ * Branch approval OTP entry
+ * 10 attempts per 15 minutes per account. Each OTP also locks after
+ * OTP_MAX_ATTEMPTS wrong guesses, so the two limits together bound guessing.
+ */
+export const branchApprovalLimiter = createRateLimiter({
+  maxRequests: 10,
+  windowMs: 15 * 60 * 1000,
+  endpoint: 'branch_approval',
+  keyGenerator: req => (req.user?.id ? `user:${req.user.id}` : req.ip),
+});
+
+/**
+ * Branch approval code resend
+ * 3 per 10 minutes per account. Each resend texts the main owner, so this
+ * caps SMS volume. The per-branch cap (MAX_OTP_ISSUES) is the second limit.
+ */
+export const branchResendLimiter = createRateLimiter({
+  maxRequests: 3,
+  windowMs: 10 * 60 * 1000,
+  endpoint: 'branch_resend',
+  keyGenerator: req => (req.user?.id ? `user:${req.user.id}` : req.ip),
+});
+
 export const createDistributedRateLimiter = async (_options = {}) => {
   // TODO: Implement Redis-based rate limiting
   // const redis = require('redis').createClient();

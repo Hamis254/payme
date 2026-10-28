@@ -211,6 +211,34 @@
       "when": 1785791087672,
       "tag": "0029_small_thor",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1792766355990,
+      "tag": "0030_business_branches",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1792990561274,
+      "tag": "0031_token_lots",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1793077765982,
+      "tag": "0032_fractional_tokens",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1793168835066,
+      "tag": "0033_fcm_device_tokens",
+      "breakpoints": true
     }
   ]
 }

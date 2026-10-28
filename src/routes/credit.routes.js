@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { authenticateToken } from '#middleware/auth.middleware.js';
 import { revenueGuard } from '#middleware/revenueGuard.middleware.js';
 import { validateRequest } from '#middleware/validation.middleware.js';
+import { idempotencyMiddleware } from '#middleware/idempotency.middleware.js';
+import { validateCreditPaymentAccount } from '#middleware/creditPayment.middleware.js';
 import {
   createCreditAccount,
   getCreditAccounts,
@@ -68,8 +70,24 @@ router.get('/sales/business/:businessId', getCreditSalesHistory);
 router.get('/sales/:saleId', getCreditSale);
 
 // Payments
+//
+// Idempotency-keyed for the same reason POST /api/payme/ is: this is a money
+// mutation that a cashier can double-tap on a slow connection, and the app
+// retries on timeout. Without a key, a retried "pay KES 500" posts twice and
+// books 1,000 against the account — and because the cost-recovery split is
+// derived from the pre-payment outstanding, the second one also corrupts the
+// profit figure, not just the balance.
+//
+// The key is required rather than optional: the Flutter client is the only
+// caller (verified — nothing in offlineSync posts here), and a silently
+// unkeyed payment is exactly the case this is meant to stop. Duplicate
+// in-flight requests collide on the idempotency_key UNIQUE constraint and get
+// 409; a completed one replays its original response.
 router.post(
   '/payments',
+  idempotencyMiddleware({ requireIdempotencyKey: true }),
+  validateCreditPaymentAccount,
+  revenueGuard,
   validateRequest(recordCreditPaymentSchema),
   recordCreditPayment
 );

@@ -1,6 +1,7 @@
 import logger from '#config/logger.js';
 import { notificationService } from '#services/notification.service.js';
 import { broadcastNotification, emitToBusiness } from '#config/socket.js';
+import { sendPushNotification } from '#services/pushNotification.service.js';
 
 // ============ NOTIFICATION EMITTER (Use this throughout app) ============
 // Import and call this: emitNotification({user_id, type, ...})
@@ -17,6 +18,7 @@ export const emitNotification = async ({
   metadata = {},
 }) => {
   try {
+    const notificationBusinessId = business_id ?? metadata?.business_id;
     // Create notification in DB + send SMS/email
     const notification = await notificationService.createNotification({
       user_id,
@@ -42,11 +44,12 @@ export const emitNotification = async ({
       message: notification.message,
       created_at: notification.created_at,
       metadata: notification.metadata,
+      business_id: notificationBusinessId,
     });
 
     // If business notification, also broadcast to business room
-    if (business_id) {
-      emitToBusiness(business_id, 'notification', {
+    if (notificationBusinessId) {
+      emitToBusiness(notificationBusinessId, 'notification', {
         id: notification.id,
         user_id,
         type,
@@ -54,6 +57,19 @@ export const emitNotification = async ({
         created_at: notification.created_at,
       });
     }
+
+    sendPushNotification(user_id, {
+      notificationId: notification.id,
+      type: notification.type,
+      title: notification.title,
+      message: notification.message,
+      businessId: notificationBusinessId,
+    }).catch(error =>
+      logger.error('Failed to schedule push notification', {
+        userId: user_id,
+        error: error.message,
+      })
+    );
 
     logger.info(`Notification emitted: ${type} for user ${user_id}`);
   } catch (e) {
@@ -137,6 +153,72 @@ export const notifications = {
       total: args.total,
       item_count: args.item_count,
       sale_id: args.sale_id,
+    },
+  }),
+
+  creditSaleCreated: args => ({
+    type: 'credit_sale_created',
+    channel: 'in_app',
+    title: 'Credit Sale Recorded',
+    message: `Credit sale of KES ${args.amount} recorded for ${args.customer_name || 'customer'}. Balance remaining: KES ${args.balance_remaining}.`,
+    related_id: args.credit_sale_id,
+    related_type: 'credit_sale',
+    metadata: {
+      business_id: args.business_id,
+      amount: args.amount,
+      credit_sale_id: args.credit_sale_id,
+      customer_name: args.customer_name || null,
+      balance_remaining: args.balance_remaining,
+    },
+  }),
+
+  creditPaymentReceived: args => ({
+    type: 'credit_payment_received',
+    channel: 'in_app',
+    title: 'Credit Payment Received',
+    message: `Payment of KES ${args.amount} received from ${args.customer_name || 'customer'}. Balance remaining: KES ${args.balance_remaining}.`,
+    related_id: args.payment_id,
+    related_type: 'credit_payment',
+    metadata: {
+      business_id: args.business_id,
+      amount: args.amount,
+      payment_id: args.payment_id,
+      credit_account_id: args.credit_account_id,
+      customer_name: args.customer_name || null,
+      balance_remaining: args.balance_remaining,
+    },
+  }),
+
+  hpAgreementCreated: args => ({
+    type: 'hp_agreement_created',
+    channel: 'in_app',
+    title: 'Hire Purchase Agreement Created',
+    message: `Hire purchase agreement #${args.agreement_id} created for KES ${args.amount}.`,
+    related_id: args.agreement_id,
+    related_type: 'hire_purchase',
+    metadata: {
+      business_id: args.business_id,
+      amount: args.amount,
+      agreement_id: args.agreement_id,
+      customer_name: args.customer_name || null,
+    },
+  }),
+
+  hpInstallmentReceived: args => ({
+    type: 'hp_installment_received',
+    channel: 'in_app',
+    title: 'Hire Purchase Installment Received',
+    message: `Installment #${args.installment_number} payment of KES ${args.amount} received. Balance remaining: KES ${args.balance_remaining}.`,
+    related_id: args.payment_id,
+    related_type: 'hire_purchase_payment',
+    metadata: {
+      business_id: args.business_id,
+      amount: args.amount,
+      payment_id: args.payment_id,
+      agreement_id: args.agreement_id,
+      installment_number: args.installment_number,
+      balance_remaining: args.balance_remaining,
+      customer_name: args.customer_name || null,
     },
   }),
 

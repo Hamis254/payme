@@ -38,6 +38,11 @@ import logger from '#config/logger.js';
 import { db, sql } from '#config/database.js';
 import { wallets, walletTransactions } from '#models/myWallet.model.js';
 import { businesses } from '#models/setting.model.js';
+import {
+  getSpendableBalance,
+  refundWalletTransaction,
+  spendTokens,
+} from '#services/tokenLots.service.js';
 import { eq, and } from 'drizzle-orm';
 import crypto from 'crypto';
 
@@ -412,7 +417,9 @@ export const revenueGuard = async (req, res, next) => {
     }
 
     // 8. CHECK TOKEN BALANCE
-    const balanceBefore = Number(wallet.balance_tokens) || 0;
+    // Spendable balance: expired trial tokens don't count, even before the
+    // hourly job has zeroed them.
+    const balanceBefore = await getSpendableBalance(businessId);
     const requiredTokens = REVENUE_GUARD_CONFIG.TOKENS_PER_BILLABLE_OPERATION;
 
     if (balanceBefore < requiredTokens) {
@@ -503,77 +510,56 @@ export const revenueGuard = async (req, res, next) => {
 };
 
 // ============================================================================
-// REVENUE DEDUCTION (Atomic Transaction)
+// REVENUE DEDUCTION (through the token lot ledger)
 // ============================================================================
 
 /**
- * Deduct tokens from wallet (called by controller after record creation)
- * Uses atomic transaction to prevent double-deduction
+ * Charges tokens to a wallet. Lot selection, expiry and row locking all live
+ * in tokenLots.service, so this only resolves the business and records the
+ * request metadata.
  */
 export const deductTokens = async (walletId, tokensToDeduct, metadata = {}) => {
   const deductionId = crypto.randomUUID();
 
   try {
-    const result = await db.transaction(async tx => {
-      // 1. Lock and fetch current balance
-      const [currentWallet] = await tx
-        .select()
-        .from(wallets)
-        .where(eq(wallets.id, walletId))
-        .limit(1);
+    const [wallet] = await db
+      .select({ business_id: wallets.business_id })
+      .from(wallets)
+      .where(eq(wallets.id, walletId))
+      .limit(1);
 
-      if (!currentWallet) {
-        throw new Error('Wallet not found');
-      }
+    if (!wallet) {
+      throw new Error('Wallet not found');
+    }
 
-      const balanceBefore = Number(currentWallet.balance_tokens);
-      const balanceAfter = balanceBefore - tokensToDeduct;
-
-      if (balanceAfter < 0) {
-        throw new Error('Insufficient balance during deduction');
-      }
-
-      // 2. Deduct tokens
-      await tx
-        .update(wallets)
-        .set({
-          balance_tokens: balanceAfter,
-          updated_at: new Date(),
-        })
-        .where(eq(wallets.id, walletId))
-        .returning();
-
-      // 3. Log transaction
-      await tx.insert(walletTransactions).values({
-        business_id: currentWallet.business_id,
-        change_tokens: -tokensToDeduct,
+    const result = await db.transaction(tx =>
+      spendTokens(tx, {
+        businessId: wallet.business_id,
+        amount: tokensToDeduct,
         type: 'charge',
         reference: metadata.reference || String(deductionId),
         note:
           metadata.note ||
           `Revenue guard deduction (${tokensToDeduct} token${tokensToDeduct === 1 ? '' : 's'})`,
-        created_at: new Date(),
-        created_by: null,
-      });
-
-      return {
-        success: true,
-        wallet_id: walletId,
-        tokens_deducted: tokensToDeduct,
-        balance_before: balanceBefore,
-        balance_after: balanceAfter,
-        deduction_id: deductionId,
-      };
-    });
+      })
+    );
 
     logger.info('TOKENS_DEDUCTED', {
       wallet_id: walletId,
       amount: tokensToDeduct,
-      balance_after: result.balance_after,
+      balance_after: result.balanceAfter,
       deduction_id: deductionId,
     });
 
-    return result;
+    return {
+      success: true,
+      wallet_id: walletId,
+      tokens_deducted: tokensToDeduct,
+      balance_after: result.balanceAfter,
+      deduction_id: deductionId,
+      wallet_transaction_id: result.walletTransactionId,
+      allocations: result.allocations,
+    };
   } catch (error) {
     logger.error('Token deduction failed', {
       wallet_id: walletId,
@@ -587,69 +573,46 @@ export const deductTokens = async (walletId, tokensToDeduct, metadata = {}) => {
 };
 
 // ============================================================================
-// REFUND HANDLER (For failed operations)
+// REFUND HANDLER
 // ============================================================================
 
 /**
- * Refund tokens if operation fails after deduction
+ * Reverses one charge. Refunds go back to the lots the charge came from. A
+ * trial token whose lot has expired is forfeited, never moved to purchased.
+ *
+ * @param {number} walletTransactionId the charge to reverse
  */
-export const refundTokens = async (walletId, tokensToRefund, reason = '') => {
+export const refundTokens = async (walletTransactionId, reason = '') => {
   try {
-    const result = await db.transaction(async tx => {
-      // Fetch current balance
-      const [currentWallet] = await tx
-        .select()
-        .from(wallets)
-        .where(eq(wallets.id, walletId))
-        .limit(1);
+    const [original] = await db
+      .select({ business_id: walletTransactions.business_id })
+      .from(walletTransactions)
+      .where(eq(walletTransactions.id, walletTransactionId))
+      .limit(1);
 
-      if (!currentWallet) {
-        throw new Error('Wallet not found');
-      }
+    if (!original) {
+      throw new Error('Wallet transaction not found');
+    }
 
-      const balanceBefore = Number(currentWallet.balance_tokens);
-      const balanceAfter = balanceBefore + tokensToRefund;
-
-      // Refund tokens
-      await tx
-        .update(wallets)
-        .set({
-          balance_tokens: balanceAfter,
-          updated_at: new Date(),
-        })
-        .where(eq(wallets.id, walletId))
-        .returning();
-
-      // Log refund
-      await tx.insert(walletTransactions).values({
-        business_id: currentWallet.business_id,
-        change_tokens: tokensToRefund,
-        type: 'refund',
-        reference: null,
-        note: reason || 'Revenue guard refund',
-        created_at: new Date(),
-        created_by: null,
-      });
-
-      return {
-        success: true,
-        tokens_refunded: tokensToRefund,
-        balance_after: balanceAfter,
-      };
-    });
+    const result = await db.transaction(tx =>
+      refundWalletTransaction(tx, {
+        businessId: original.business_id,
+        walletTransactionId,
+        reason: reason || 'Revenue guard refund',
+      })
+    );
 
     logger.info('TOKENS_REFUNDED', {
-      wallet_id: walletId,
-      amount: tokensToRefund,
+      wallet_transaction_id: walletTransactionId,
+      refunded: result.refunded,
+      forfeited: result.forfeited,
       reason,
-      balance_after: result.balance_after,
     });
 
     return result;
   } catch (error) {
     logger.error('Token refund failed', {
-      wallet_id: walletId,
-      tokens: tokensToRefund,
+      wallet_transaction_id: walletTransactionId,
       reason,
       error: error.message,
     });
