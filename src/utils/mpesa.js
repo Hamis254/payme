@@ -1,178 +1,304 @@
 import axios from 'axios';
 import logger from '#config/logger.js';
-import base64 from 'base-64';
 
 // ============================================================================
-// M-PESA CONFIGURATION
+// M-PESA CONFIGURATION  (everything comes from .env — nothing hard-coded)
 // ============================================================================
 //
-// ENVIRONMENT SWITCH:
-//   Set MPESA_ENV=production in .env to go live.
-//   Default is sandbox.
+//   MPESA_ENV                  sandbox | production            (default sandbox)
+//   MPESA_CONSUMER_KEY         Daraja app consumer key
+//   MPESA_CONSUMER_SECRET      Daraja app consumer secret
 //
-// TWO PAYBILL ARCHITECTURE:
-//   PayMe Platform Till (3485049): Used for token purchases by merchants.
-//     - MPESA_PASSKEY: passkey for till 3485049
+//   --- Flow 1: token purchases (PayMe platform till) ---
+//   MPESA_TILL_NUMBER          platform till           (PartyB)
+//   MPESA_SHORTCODE            optional. BusinessShortCode. Defaults to
+//                              MPESA_TILL_NUMBER. In production a Till's
+//                              BusinessShortCode is its Store/HO number, so
+//                              set this if yours differs from the till.
+//   MPESA_PASSKEY              passkey that belongs to MPESA_SHORTCODE
+//   MPESA_ACCOUNT_REFERENCE    optional, max 12 chars  (default PayMeTokens)
+//   MPESA_TOKEN_CALLBACK_URL   public HTTPS URL of the TOKEN callback route
 //
-//   Business Paybill/Till: Set per-business in payment_configs table.
-//     - Each business configures their own shortcode + passkey in Settings.
-//     - Used when initiating STK push to a customer for a sale.
+//   --- Flow 2: business customer payments ---
+//   MPESA_SALES_CALLBACK_URL   public HTTPS URL of the SALES callback route
+//   (shortcode / passkey / method come from the payment_configs table)
 //
-// ACCOUNT REFERENCES (shown on customer's phone):
-//   Paybill: account_reference field (e.g. "SHOP001") — max 12 chars — REQUIRED
-//   Till:    account_reference field (store name) — optional, defaults to till number
+//   --- Sandbox helpers ---
+//   MPESA_FORCE_TRANSACTION_TYPE  e.g. CustomerPayBillOnline. Honoured ONLY
+//                                 when MPESA_ENV !== production. The Daraja
+//                                 sandbox is built around paybill 174379.
+//   MPESA_TEST_PHONE              254708374149
 // ============================================================================
 
-// Fixed PayMe platform till for token purchases
-const WALLET_TILL_NUMBER = '3485049';
-const WALLET_ACCOUNT_REFERENCE = 'Onlinebuygoods';
+const isProduction = () => process.env.MPESA_ENV === 'production';
 
-// Switch between sandbox and production with one env variable
-const MPESA_BASE_URL =
-  process.env.MPESA_ENV === 'production'
+const getBaseUrl = () =>
+  isProduction()
     ? 'https://api.safaricom.co.ke'
     : 'https://sandbox.safaricom.co.ke';
 
+// Kept for backwards compatibility with paymentConfig.service.js.
+const MPESA_BASE_URL = getBaseUrl();
+
+const requireEnv = name => {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing ${name} in environment`);
+  return value;
+};
+
+// ----------------------------------------------------------------------------
+// Helpers
+// ----------------------------------------------------------------------------
+
 /**
- * Get M-Pesa OAuth access token.
- * Shared across all STK push operations — uses the platform app credentials.
+ * Daraja wants 2547XXXXXXXX / 2541XXXXXXXX — digits only, NO leading "+".
+ * Accepts 07.., 01.., 7.., 1.., 254.., +254..
  */
-const getAccessToken = async () => {
-  const consumerKey = process.env.MPESA_CONSUMER_KEY;
-  const consumerSecret = process.env.MPESA_CONSUMER_SECRET;
+export const toDarajaPhone = phone => {
+  if (!phone) throw new Error('Phone number is required');
+  const digits = String(phone).replace(/\D/g, '');
 
-  if (!consumerKey || !consumerSecret) {
-    throw new Error(
-      'Missing M-Pesa OAuth credentials (MPESA_CONSUMER_KEY / MPESA_CONSUMER_SECRET)'
-    );
-  }
+  let msisdn;
+  if (/^254[17]\d{8}$/.test(digits)) msisdn = digits;
+  else if (/^0[17]\d{8}$/.test(digits)) msisdn = `254${digits.slice(1)}`;
+  else if (/^[17]\d{8}$/.test(digits)) msisdn = `254${digits}`;
 
-  const auth = base64.encode(`${consumerKey}:${consumerSecret}`);
-
-  const response = await axios.get(
-    `${MPESA_BASE_URL}/oauth/v1/generate?grant_type=client_credentials`,
-    {
-      headers: { Authorization: `Basic ${auth}` },
-      timeout: 10000,
-    }
-  );
-
-  return response.data.access_token;
+  if (!msisdn) throw new Error('Invalid Kenyan phone number');
+  return msisdn;
 };
 
 /**
- * Build the STK Push password (base64 of shortcode + passkey + timestamp)
- * and the timestamp required by Safaricom.
+ * Daraja timestamp: YYYYMMDDHHmmss, in East Africa Time (UTC+3, no DST).
+ *
+ * The old version did
+ *   toISOString().replace(/[:-]/g, '').slice(0, 14)
+ * which yields "20261029T12345" — it keeps the "T", drops the last second
+ * digit, and is in UTC. Safaricom rejects that password/timestamp pair.
  */
-const buildMpesaPassword = (shortcode, passkey) => {
-  const timestamp = new Date().toISOString().replace(/[:-]/g, '').slice(0, 14);
-  const password = base64.encode(`${shortcode}${passkey}${timestamp}`);
+export const darajaTimestamp = (now = new Date()) => {
+  const eat = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+  return eat.toISOString().replace(/\D/g, '').slice(0, 14);
+};
+
+export const buildMpesaPassword = (shortcode, passkey, now = new Date()) => {
+  const timestamp = darajaTimestamp(now);
+  const password = Buffer.from(`${shortcode}${passkey}${timestamp}`).toString(
+    'base64'
+  );
   return { password, timestamp };
 };
 
-// ============================================================================
-// STK PUSH — TOKEN PURCHASES (PayMe Platform Till)
-// ============================================================================
-// All merchants buy tokens by paying into PayMe's till number (3485049).
-// MPESA_PASSKEY must match the passkey for till 3485049 in Daraja portal.
-// ============================================================================
+/** Turn an axios failure into an Error that carries Daraja's real reason. */
+const toDarajaError = (err, context) => {
+  const data = err.response?.data;
+  const detail =
+    data?.errorMessage ||
+    data?.ResponseDescription ||
+    data?.error_description ||
+    data?.error ||
+    data?.message ||
+    err.message;
+  const code = data?.errorCode || data?.ResponseCode || err.response?.status;
+  const error = new Error(`${context}: ${code ? `${code} — ` : ''}${detail}`);
+  error.daraja = data;
+  error.status = err.response?.status;
+  return error;
+};
 
-export const initiateTokenPurchase = async ({
-  phone,
-  amount,
-  accountReference,
-}) => {
+// ----------------------------------------------------------------------------
+// OAuth (cached — Daraja tokens live ~1 hour)
+// ----------------------------------------------------------------------------
+
+let tokenCache = { token: null, expiresAt: 0, env: null };
+
+const getAccessToken = async () => {
+  const env = isProduction() ? 'production' : 'sandbox';
+  if (
+    tokenCache.token &&
+    tokenCache.env === env &&
+    Date.now() < tokenCache.expiresAt
+  ) {
+    return tokenCache.token;
+  }
+
+  const consumerKey = requireEnv('MPESA_CONSUMER_KEY');
+  const consumerSecret = requireEnv('MPESA_CONSUMER_SECRET');
+  const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString(
+    'base64'
+  );
+
   try {
-    if (!phone || !amount || !accountReference) {
-      throw new Error(
-        'Missing required parameters: phone, amount, accountReference'
-      );
-    }
-
-    const accessToken = await getAccessToken();
-    const passKey = process.env.MPESA_PASSKEY;
-
-    if (!passKey) {
-      throw new Error(
-        'Missing MPESA_PASSKEY environment variable (required for PayMe platform till)'
-      );
-    }
-
-    const { password, timestamp } = buildMpesaPassword(WALLET_TILL_NUMBER, passKey);
-
-    const payload = {
-      BusinessShortCode: WALLET_TILL_NUMBER,
-      Password: password,
-      Timestamp: timestamp,
-      TransactionType: 'CustomerBuyGoodsOnline',
-      Amount: Math.round(amount),
-      PartyA: phone,
-      PartyB: WALLET_TILL_NUMBER,
-      PhoneNumber: phone,
-      CallBackURL: process.env.MPESA_CALLBACK_URL,
-      AccountReference: WALLET_ACCOUNT_REFERENCE,
-      TransactionDesc: accountReference,
+    const response = await axios.get(
+      `${getBaseUrl()}/oauth/v1/generate?grant_type=client_credentials`,
+      { headers: { Authorization: `Basic ${auth}` }, timeout: 10000 }
+    );
+    const ttlMs = (Number(response.data.expires_in) || 3599) * 1000;
+    tokenCache = {
+      token: response.data.access_token,
+      expiresAt: Date.now() + ttlMs - 60_000,
+      env,
     };
+    return tokenCache.token;
+  } catch (err) {
+    throw toDarajaError(err, 'M-Pesa OAuth failed (check key/secret vs MPESA_ENV)');
+  }
+};
 
-    logger.info('Initiating token purchase STK push', {
-      env: process.env.MPESA_ENV || 'sandbox',
-      tillNumber: WALLET_TILL_NUMBER,
-      account: WALLET_ACCOUNT_REFERENCE,
-      amount,
-    });
+// ----------------------------------------------------------------------------
+// ONE STK push implementation, used by BOTH flows (and config verification)
+// ----------------------------------------------------------------------------
 
-    const response = await axios.post(
-      `${MPESA_BASE_URL}/mpesa/stkpush/v1/processrequest`,
+export const sendStkPush = async ({
+  label,
+  shortcode, // BusinessShortCode
+  partyB, // receiving till / paybill
+  passkey,
+  transactionType,
+  amount,
+  phone,
+  accountReference,
+  description,
+  callbackUrl,
+}) => {
+  const msisdn = toDarajaPhone(phone);
+  const amountInt = Math.round(Number(amount));
+  if (!Number.isFinite(amountInt) || amountInt < 1) {
+    throw new Error('Amount must be at least KES 1');
+  }
+  if (!callbackUrl || !/^https:\/\//i.test(callbackUrl)) {
+    throw new Error('Callback URL must be a public HTTPS URL');
+  }
+
+  const effectiveType =
+    !isProduction() && process.env.MPESA_FORCE_TRANSACTION_TYPE
+      ? process.env.MPESA_FORCE_TRANSACTION_TYPE
+      : transactionType;
+
+  const accessToken = await getAccessToken();
+  const { password, timestamp } = buildMpesaPassword(shortcode, passkey);
+
+  const payload = {
+    BusinessShortCode: String(shortcode),
+    Password: password,
+    Timestamp: timestamp,
+    TransactionType: effectiveType,
+    Amount: amountInt,
+    PartyA: msisdn,
+    PartyB: String(partyB),
+    PhoneNumber: msisdn,
+    CallBackURL: callbackUrl,
+    AccountReference: String(accountReference).substring(0, 12),
+    TransactionDesc: String(description).substring(0, 13),
+  };
+
+  logger.info(`STK push (${label})`, {
+    env: isProduction() ? 'production' : 'sandbox',
+    shortcode: payload.BusinessShortCode,
+    partyB: payload.PartyB,
+    transactionType: payload.TransactionType,
+    amount: amountInt,
+    callbackUrl,
+    // never log Password / passkey / full phone
+    phoneTail: msisdn.slice(-4),
+  });
+
+  let response;
+  try {
+    response = await axios.post(
+      `${getBaseUrl()}/mpesa/stkpush/v1/processrequest`,
       payload,
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
-        timeout: 10000,
+        timeout: 15000,
       }
     );
-
-    const {
-      ResponseCode,
-      ResponseDescription,
-      CheckoutRequestID,
-      CustomerMessage,
-    } = response.data;
-
-    if (ResponseCode === '0') {
-      logger.info('Token purchase STK push initiated', {
-        checkoutRequestId: CheckoutRequestID,
-      });
-      return {
-        success: true,
-        CheckoutRequestID,
-        ResponseCode,
-        ResponseDescription,
-        CustomerMessage,
-      };
-    } else {
-      throw new Error(
-        `M-Pesa error: ${ResponseCode} — ${ResponseDescription || CustomerMessage}`
-      );
-    }
-  } catch (e) {
-    logger.error('Token purchase STK push failed', { error: e.message });
-    throw e;
+  } catch (err) {
+    const error = toDarajaError(err, `STK push (${label}) rejected`);
+    logger.error(`STK push (${label}) failed`, {
+      status: error.status,
+      daraja: error.daraja,
+    });
+    throw error;
   }
+
+  const {
+    ResponseCode,
+    ResponseDescription,
+    CheckoutRequestID,
+    MerchantRequestID,
+    CustomerMessage,
+  } = response.data;
+
+  if (String(ResponseCode) !== '0') {
+    throw new Error(
+      `M-Pesa error: ${ResponseCode} — ${ResponseDescription || CustomerMessage}`
+    );
+  }
+
+  logger.info(`STK push (${label}) accepted`, {
+    checkoutRequestId: CheckoutRequestID,
+  });
+
+  return {
+    success: true,
+    CheckoutRequestID,
+    MerchantRequestID,
+    ResponseCode,
+    ResponseDescription,
+    CustomerMessage,
+  };
+};
+
+// ----------------------------------------------------------------------------
+// Platform till config — read lazily so dotenv load order can't bite us
+// ----------------------------------------------------------------------------
+
+export const getPlatformTill = () => {
+  const tillNumber = requireEnv('MPESA_TILL_NUMBER');
+  return {
+    tillNumber,
+    shortcode: process.env.MPESA_SHORTCODE || tillNumber,
+    passkey: requireEnv('MPESA_PASSKEY'),
+    accountReference: process.env.MPESA_ACCOUNT_REFERENCE || 'PayMeTokens',
+    callbackUrl: requireEnv('MPESA_TOKEN_CALLBACK_URL'),
+  };
 };
 
 // ============================================================================
-// STK PUSH — CUSTOMER PAYMENTS (Per-Business Paybill or Till)
+// FLOW 1 — TOKEN PURCHASES (PayMe platform till, from .env)
 // ============================================================================
-// Uses the business's own paybill or till from the payment_configs table.
-// No fallback to platform paybill — config MUST be set up first.
-//
-// Till number:  TransactionType = CustomerBuyGoodsOnline
-//               AccountReference = store name (optional, shown to customer)
-//
-// Paybill:      TransactionType = CustomerPayBillOnline
-//               AccountReference = account number (REQUIRED, max 12 chars)
+
+export const initiateTokenPurchase = async ({
+  phone,
+  amount,
+  accountReference, // e.g. TOKEN-123 — goes in TransactionDesc
+}) => {
+  if (!phone || !amount || !accountReference) {
+    throw new Error(
+      'Missing required parameters: phone, amount, accountReference'
+    );
+  }
+  const till = getPlatformTill();
+
+  return sendStkPush({
+    label: 'token-purchase',
+    shortcode: till.shortcode,
+    partyB: till.tillNumber,
+    passkey: till.passkey,
+    transactionType: 'CustomerBuyGoodsOnline',
+    amount,
+    phone,
+    accountReference: till.accountReference,
+    description: accountReference,
+    callbackUrl: till.callbackUrl,
+  });
+};
+
+// ============================================================================
+// FLOW 2 — BUSINESS CUSTOMER PAYMENTS (till/paybill saved by the merchant)
 // ============================================================================
 
 export const initiateBusinessPayment = async ({
@@ -181,126 +307,52 @@ export const initiateBusinessPayment = async ({
   amount,
   description,
 }) => {
-  try {
-    if (!phone || !amount || !description) {
-      throw new Error(
-        'Missing required parameters: phone, amount, description'
-      );
-    }
-
-    if (!paymentConfig) {
-      throw new Error(
-        'Business payment configuration is required. ' +
-          'Please set up your M-Pesa credentials in Settings.'
-      );
-    }
-
-    if (!paymentConfig.is_active) {
-      throw new Error(
-        'Payment configuration is inactive. Please activate in Settings.'
-      );
-    }
-
-    if (!paymentConfig.shortcode || !paymentConfig.passkey) {
-      throw new Error(
-        'Payment configuration is incomplete. Please reconfigure your M-Pesa credentials.'
-      );
-    }
-
-    const accessToken = await getAccessToken();
-
-    const businessShortCode = paymentConfig.shortcode;
-    const passKey = paymentConfig.passkey;
-    const isTill = paymentConfig.payment_method === 'till_number';
-
-    // Paybill: account_reference is the account number — REQUIRED by Safaricom
-    // Till:    account_reference is the store name — optional, defaults to till number
-    const accountRef = isTill
-      ? (paymentConfig.account_reference || businessShortCode).substring(0, 12)
-      : paymentConfig.account_reference;
-
-    if (!isTill && !accountRef) {
-      throw new Error(
-        'Account reference is required for paybill payments. ' +
-          'Please update your payment configuration.'
-      );
-    }
-
-    const { password, timestamp } = buildMpesaPassword(
-      businessShortCode,
-      passKey
-    );
-
-    const payload = {
-      BusinessShortCode: businessShortCode,
-      Password: password,
-      Timestamp: timestamp,
-      TransactionType: isTill
-        ? 'CustomerBuyGoodsOnline'
-        : 'CustomerPayBillOnline',
-      Amount: Math.round(amount),
-      PartyA: phone,
-      PartyB: businessShortCode,
-      PhoneNumber: phone,
-      CallBackURL: process.env.MPESA_CALLBACK_URL,
-      AccountReference: accountRef,
-      TransactionDesc: description.substring(0, 13), // Safaricom max is 13 chars
-    };
-
-    logger.info('Initiating business payment STK push', {
-      env: process.env.MPESA_ENV || 'sandbox',
-      shortcode: businessShortCode,
-      paymentMethod: paymentConfig.payment_method,
-      transactionType: payload.TransactionType,
-      amount,
-      configVerified: paymentConfig.verified,
-    });
-
-    const response = await axios.post(
-      `${MPESA_BASE_URL}/mpesa/stkpush/v1/processrequest`,
-      payload,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 10000,
-      }
-    );
-
-    const {
-      ResponseCode,
-      ResponseDescription,
-      CheckoutRequestID,
-      CustomerMessage,
-    } = response.data;
-
-    if (ResponseCode === '0') {
-      logger.info('Business payment STK push initiated', {
-        checkoutRequestId: CheckoutRequestID,
-      });
-      return {
-        success: true,
-        CheckoutRequestID,
-        ResponseCode,
-        ResponseDescription,
-        CustomerMessage,
-      };
-    } else {
-      throw new Error(
-        `M-Pesa error: ${ResponseCode} — ${ResponseDescription || CustomerMessage}`
-      );
-    }
-  } catch (e) {
-    logger.error('Business payment STK push failed', { error: e.message });
-    throw e;
+  if (!phone || !amount || !description) {
+    throw new Error('Missing required parameters: phone, amount, description');
   }
+  if (!paymentConfig) {
+    throw new Error(
+      'Business payment configuration is required. Please set up your M-Pesa credentials in Settings.'
+    );
+  }
+  if (!paymentConfig.is_active) {
+    throw new Error(
+      'Payment configuration is inactive. Please activate in Settings.'
+    );
+  }
+  if (!paymentConfig.shortcode || !paymentConfig.passkey) {
+    throw new Error(
+      'Payment configuration is incomplete. Please reconfigure your M-Pesa credentials.'
+    );
+  }
+
+  const isTill = paymentConfig.payment_method === 'till_number';
+  const accountReference = isTill
+    ? paymentConfig.account_reference || paymentConfig.shortcode
+    : paymentConfig.account_reference;
+
+  if (!isTill && !accountReference) {
+    throw new Error(
+      'Account reference is required for paybill payments. Please update your payment configuration.'
+    );
+  }
+
+  return sendStkPush({
+    label: 'business-payment',
+    shortcode: paymentConfig.shortcode,
+    partyB: paymentConfig.shortcode,
+    passkey: paymentConfig.passkey,
+    transactionType: isTill ? 'CustomerBuyGoodsOnline' : 'CustomerPayBillOnline',
+    amount,
+    phone,
+    accountReference,
+    description,
+    callbackUrl: requireEnv('MPESA_SALES_CALLBACK_URL'),
+  });
 };
 
 // ============================================================================
-// B2C PAYOUT (Business to Customer)
-// ============================================================================
-// Used for wallet withdrawals or refunds to a customer's phone number.
+// B2C PAYOUT (unchanged apart from shared helpers)
 // ============================================================================
 
 export const initiateB2CPayout = async ({
@@ -308,44 +360,36 @@ export const initiateB2CPayout = async ({
   amount,
   remarks = 'PAYME Payout',
 }) => {
+  if (!phone || !amount) {
+    throw new Error('Missing required parameters: phone, amount');
+  }
+
+  const initiator = process.env.MPESA_B2C_INITIATOR;
+  const securityCredential = process.env.MPESA_B2C_SECURITY_CREDENTIAL;
+  const partyA = process.env.MPESA_B2C_SHORTCODE;
+
+  if (!initiator || !securityCredential || !partyA) {
+    throw new Error(
+      'Missing B2C configuration (MPESA_B2C_INITIATOR, MPESA_B2C_SECURITY_CREDENTIAL, or MPESA_B2C_SHORTCODE)'
+    );
+  }
+
+  const accessToken = await getAccessToken();
+  const payload = {
+    InitiatorName: initiator,
+    SecurityCredential: securityCredential,
+    CommandID: 'BusinessPayment',
+    Amount: Math.round(amount),
+    PartyA: partyA,
+    PartyB: toDarajaPhone(phone),
+    Remarks: remarks,
+    QueueTimeOutURL: process.env.MPESA_B2C_TIMEOUT_URL,
+    ResultURL: process.env.MPESA_B2C_RESULT_URL,
+  };
+
   try {
-    if (!phone || !amount) {
-      throw new Error('Missing required parameters: phone, amount');
-    }
-
-    const accessToken = await getAccessToken();
-
-    const initiator = process.env.MPESA_B2C_INITIATOR;
-    const securityCredential = process.env.MPESA_B2C_SECURITY_CREDENTIAL;
-    const partyA = process.env.MPESA_B2C_SHORTCODE;
-
-    if (!initiator || !securityCredential || !partyA) {
-      throw new Error(
-        'Missing B2C configuration (MPESA_B2C_INITIATOR, MPESA_B2C_SECURITY_CREDENTIAL, or MPESA_B2C_SHORTCODE)'
-      );
-    }
-
-    const payload = {
-      InitiatorName: initiator,
-      SecurityCredential: securityCredential,
-      CommandID: 'BusinessPayment',
-      Amount: Math.round(amount),
-      PartyA: partyA,
-      PartyB: phone,
-      Remarks: remarks,
-      QueueTimeOutURL: process.env.MPESA_B2C_TIMEOUT_URL,
-      ResultURL: process.env.MPESA_B2C_RESULT_URL,
-    };
-
-    logger.info('Initiating B2C payout', {
-      env: process.env.MPESA_ENV || 'sandbox',
-      phone,
-      amount,
-      partyA,
-    });
-
     const response = await axios.post(
-      `${MPESA_BASE_URL}/mpesa/b2c/v3/paymentrequest`,
+      `${getBaseUrl()}/mpesa/b2c/v3/paymentrequest`,
       payload,
       {
         headers: {
@@ -355,51 +399,26 @@ export const initiateB2CPayout = async ({
         timeout: 10000,
       }
     );
-
     const { ResponseCode, ResponseDescription, ConversationID } = response.data;
-
-    if (ResponseCode === '0') {
-      logger.info('B2C payout initiated', { conversationId: ConversationID });
-      return {
-        success: true,
-        ConversationID,
-        ResponseCode,
-        ResponseDescription,
-      };
-    } else {
-      throw new Error(
-        `M-Pesa B2C error: ${ResponseCode} — ${ResponseDescription}`
-      );
+    if (ResponseCode !== '0') {
+      throw new Error(`M-Pesa B2C error: ${ResponseCode} — ${ResponseDescription}`);
     }
+    logger.info('B2C payout initiated', { conversationId: ConversationID });
+    return { success: true, ConversationID, ResponseCode, ResponseDescription };
   } catch (e) {
-    logger.error('B2C payout failed', { error: e.message });
-    throw e;
+    const error = e.response ? toDarajaError(e, 'B2C payout rejected') : e;
+    logger.error('B2C payout failed', { error: error.message });
+    throw error;
   }
 };
 
 // ============================================================================
-// UTILITY FUNCTIONS
+// UTILITIES
 // ============================================================================
 
-/**
- * Normalize a Kenyan phone number to E.164 format (+254...)
- */
-export const normalizePhoneNumber = phone => {
-  if (!phone) throw new Error('Phone number is required');
+/** E.164 (+254...) — for storage/display only. Use toDarajaPhone for Daraja. */
+export const normalizePhoneNumber = phone => `+${toDarajaPhone(phone)}`;
 
-  const cleaned = phone.replace(/[^\d+]/g, '');
-
-  if (cleaned.startsWith('+254')) return cleaned;
-  if (cleaned.startsWith('254')) return `+${cleaned}`;
-  if (cleaned.startsWith('0')) return `+254${cleaned.slice(1)}`;
-  if (cleaned.length === 9) return `+254${cleaned}`;
-
-  throw new Error('Invalid phone number format');
-};
-
-/**
- * Format an M-Pesa API response into a consistent shape
- */
 export const formatMpesaResponse = response => {
   if (!response) return null;
   return {
@@ -412,7 +431,4 @@ export const formatMpesaResponse = response => {
   };
 };
 
-// Exported so other modules (e.g. paymentConfig.service.js's verify step)
-// reuse the same sandbox/production switch and token-fetch logic instead of
-// duplicating it with a hardcoded sandbox URL.
-export { WALLET_TILL_NUMBER, WALLET_ACCOUNT_REFERENCE, MPESA_BASE_URL, getAccessToken };
+export { MPESA_BASE_URL, getAccessToken };

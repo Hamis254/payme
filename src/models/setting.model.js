@@ -25,7 +25,7 @@ export const BRANCH_STATUS = Object.freeze({
 // payment_method is restricted (in validation) to one of:
 // - 'till_number'
 // - 'paybill'
-// - 'wallet' (uses fixed till number 3485049 and account reference Onlinebuygoods)
+// - 'wallet' (uses the platform till configured in the environment)
 // payment_identifier will hold the actual till/paybill that will be used
 // later when triggering Safaricom STK Push to the customer.
 export const businesses = pgTable('businesses', {

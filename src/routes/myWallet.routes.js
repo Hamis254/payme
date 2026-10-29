@@ -1,6 +1,7 @@
 import express from 'express';
 import { authenticateToken } from '#middleware/auth.middleware.js';
 import { webhookLimiter } from '#middleware/rateLimiter.middleware.js';
+import { validateMpesaWebhook } from '#middleware/webhookSecurity.middleware.js';
 import {
   getWalletHandler,
   getBalanceHandler,
@@ -51,7 +52,12 @@ router.post(
  * Called by M-Pesa API when payment completes
  * Rate limited to prevent abuse
  */
-router.post('/callback', webhookLimiter, processCallbackHandler);
+router.post(
+  '/callback',
+  webhookLimiter,
+  validateMpesaWebhook(),
+  processCallbackHandler
+);
 
 /**
  * GET /api/my-wallet/:businessId/transactions

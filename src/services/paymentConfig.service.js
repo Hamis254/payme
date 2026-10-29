@@ -13,12 +13,8 @@
  *
  * ENVIRONMENT FIX (added)
  * ─────────────────────────
- * `verifyPaymentConfig` previously always called sandbox.safaricom.co.ke
- * and fetched its own OAuth token, regardless of MPESA_ENV. That meant
- * verifying a real production till/paybill would always fail. It now
- * reuses the same MPESA_BASE_URL switch and getAccessToken() helper as
- * every other M-Pesa call in the app (#utils/mpesa.js), and accepts an
- * optional test phone number instead of a hardcoded placeholder.
+ * `verifyPaymentConfig` uses the shared STK push helper so verification
+ * follows the same environment, callback, and timestamp behavior as payments.
  */
 
 import logger from '#config/logger.js';
@@ -26,10 +22,8 @@ import { db } from '#config/database.js';
 import { eq, and } from 'drizzle-orm';
 import { paymentConfigs } from '#models/paymentConfig.model.js';
 import { businesses } from '#models/setting.model.js';
-import axios from 'axios';
-import base64 from 'base-64';
 import { encrypt, decrypt, isEncrypted } from '#utils/encryption.js';
-import { MPESA_BASE_URL, getAccessToken } from '#utils/mpesa.js';
+import { initiateBusinessPayment } from '#utils/mpesa.js';
 
 const normalizePaymentMethod = method => {
   if (method === 'till') return 'till_number';
@@ -61,7 +55,7 @@ const withDecryptedPasskey = config => {
           ...config,
           passkey: decrypt(config.passkey, configIdAAD),
         };
-      } catch (e2) {
+      } catch {
         // Re-throw the original error to preserve context
         throw e1;
       }
@@ -328,81 +322,27 @@ export const verifyPaymentConfig = async (configId, testPhoneNumber = null) => {
       );
     }
 
-    // Reuses the same sandbox/production switch as every other M-Pesa call
-    // in the app — previously this always hit sandbox.safaricom.co.ke
-    // regardless of MPESA_ENV, so verifying real production credentials
-    // always failed.
-    const accessToken = await getAccessToken();
+    await initiateBusinessPayment({
+      paymentConfig: config,
+      phone: phoneForTest,
+      amount: 1,
+      description: 'CONFIG_VERIFICATION_TEST',
+    });
 
-    // Build test password
-    const timestamp = new Date()
-      .toISOString()
-      .replace(/[:-]/g, '')
-      .slice(0, 14);
-    const password = base64.encode(
-      `${config.shortcode}${config.passkey}${timestamp}`
-    );
+    await db
+      .update(paymentConfigs)
+      .set({
+        verified: true,
+        updated_at: new Date(),
+      })
+      .where(eq(paymentConfigs.id, configId));
 
-    const isTill = config.payment_method === 'till_number';
-
-    // Same account-reference handling as initiateBusinessPayment in
-    // mpesa.js: paybill requires it, till falls back to the shortcode.
-    const accountRef = isTill
-      ? (config.account_reference || config.shortcode).substring(0, 12)
-      : config.account_reference;
-
-    // Test STK Push with minimal amount
-    const testPayload = {
-      BusinessShortCode: config.shortcode,
-      Password: password,
-      Timestamp: timestamp,
-      TransactionType: isTill
-        ? 'CustomerBuyGoodsOnline'
-        : 'CustomerPayBillOnline',
-      Amount: 1, // Test with 1 KSH
-      PartyA: phoneForTest,
-      PartyB: config.shortcode,
-      PhoneNumber: phoneForTest,
-      CallBackURL: process.env.MPESA_CALLBACK_URL,
-      AccountReference: accountRef,
-      TransactionDesc: 'CONFIG_VERIFICATION_TEST',
-    };
-
-    const response = await axios.post(
-      `${MPESA_BASE_URL}/mpesa/stkpush/v1/processrequest`,
-      testPayload,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 10000,
-      }
-    );
-
-    const { ResponseCode } = response.data;
-
-    if (ResponseCode === '0') {
-      // ✅ Credentials are valid
-      await db
-        .update(paymentConfigs)
-        .set({
-          verified: true,
-          updated_at: new Date(),
-        })
-        .where(eq(paymentConfigs.id, configId));
-
-      logger.info('Payment config verified successfully', {
-        configId,
-        method: config.payment_method,
-        env: process.env.MPESA_ENV || 'sandbox',
-      });
-      return true;
-    } else {
-      throw new Error(
-        `Invalid credentials: ${response.data.ResponseDescription || response.data.ResponseCode}`
-      );
-    }
+    logger.info('Payment config verified successfully', {
+      configId,
+      method: config.payment_method,
+      env: process.env.MPESA_ENV || 'sandbox',
+    });
+    return true;
   } catch (e) {
     logger.error('Payment config verification failed', {
       configId,

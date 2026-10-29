@@ -12,7 +12,6 @@ import salesRoutes from '#routes/sales.routes.js';
 import paymeRoutes from '#routes/payme.routes.js';
 import creditRoutes from '#routes/credit.routes.js';
 import walletRoutes from '#routes/wallet.routes.js';
-import walletPaymentRoutes from '#routes/walletPayment.routes.js';
 import paymentConfigRoutes from '#routes/paymentConfig.routes.js';
 import recordRoutes from '#routes/record.routes.js';
 import expenseRoutes from '#routes/expense.routes.js';
@@ -42,6 +41,7 @@ import {
 } from '#middleware/xss.middleware.js';
 
 const app = express();
+app.set('trust proxy', 1);
 
 // ============ SECURITY & MIDDLEWARE ============
 
@@ -131,7 +131,6 @@ app.use('/api/sales', salesRoutes);
 app.use('/api/payme', paymeRoutes);
 app.use('/api/credit', creditRoutes);
 app.use('/api/wallet', walletRoutes);
-app.use('/api/wallet-payment', walletPaymentRoutes);
 app.use('/api/records', recordRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/my-wallet', myWalletRoutes);

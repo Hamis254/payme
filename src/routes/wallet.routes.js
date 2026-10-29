@@ -2,6 +2,7 @@ import express from 'express';
 import { authenticateToken, requireRole } from '#middleware/auth.middleware.js';
 import { webhookLimiter } from '#middleware/rateLimiter.middleware.js';
 import { validateBusinessId } from '#middleware/businessId.middleware.js';
+import { validateMpesaWebhook } from '#middleware/webhookSecurity.middleware.js';
 import {
   getWalletBalance,
   initiateTokenPurchaseHandler,
@@ -21,6 +22,7 @@ const router = express.Router();
 router.post(
   '/callback/token-purchase',
   webhookLimiter,
+  validateMpesaWebhook(),
   tokenPurchaseCallbackHandler
 );
 

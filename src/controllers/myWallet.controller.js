@@ -135,22 +135,20 @@ export const processCallbackHandler = async (req, res, _next) => {
     const validationResult = tokenPurchaseCallbackSchema.safeParse(req.body);
 
     if (!validationResult.success) {
-      return res.status(400).json({
-        error: 'Invalid callback',
+      logger.warn('Invalid my-wallet M-Pesa callback payload', {
         details: formatValidationError(validationResult.error),
       });
+      return res
+        .status(200)
+        .json({ ResultCode: 0, ResultDesc: 'Accepted' });
     }
 
-    const result = await processTokenPurchaseCallback(validationResult.data);
+    await processTokenPurchaseCallback(validationResult.data.Body.stkCallback);
 
-    res.status(200).json({
-      success: true,
-      message: 'Callback processed',
-      data: result,
-    });
+    return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
   } catch (e) {
     logger.error('Process callback failed', e);
-    res.status(400).json({ error: e.message });
+    return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
   }
 };
 

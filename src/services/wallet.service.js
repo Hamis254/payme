@@ -111,7 +111,7 @@ export const initiateTokenPurchase = async (
       .returning();
 
     // Initiate M-Pesa STK Push using platform wallet till number
-    // All token purchases go to till 3485049 with account reference Onlinebuygoods
+
     const mpesaResp = await initiateMpesaTokenPurchase({
       phone,
       amount: purchaseAmount,

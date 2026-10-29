@@ -83,7 +83,7 @@ export const validatePaymentDetails = ({
   }
 
   if (payment_method === 'wallet') {
-    // Wallet uses fixed till number 3485049 and account reference Onlinebuygoods, no validation needed
+    // Wallet uses the platform till configured in the environment.
     return;
   }
 };

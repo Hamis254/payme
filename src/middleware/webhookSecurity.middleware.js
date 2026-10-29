@@ -261,10 +261,20 @@ export const isTimestampValid = (timestamp, maxAgeMs = 5 * 60 * 1000) => {
  */
 export const validateMpesaWebhook = () => {
   return (req, res, next) => {
-    const requestIp = req.ip || req.connection.remoteAddress;
+    const requestIp = (req.ip || req.connection.remoteAddress || '').replace(
+      /^::ffff:/,
+      ''
+    );
+    const skipIpCheck =
+      process.env.MPESA_ENV !== 'production' &&
+      process.env.MPESA_SKIP_IP_CHECK === 'true';
 
     // 1. Verify source IP
-    if (!verifySourceIp(requestIp)) {
+    if (skipIpCheck) {
+      logger.warn('M-Pesa webhook IP check disabled by MPESA_SKIP_IP_CHECK', {
+        environment: process.env.MPESA_ENV || 'sandbox',
+      });
+    } else if (!verifySourceIp(requestIp)) {
       logger.error('Webhook rejected: Invalid source IP', { requestIp });
       // Return 200 OK to Safaricom (they expect acknowledgment)
       // But reject processing the callback

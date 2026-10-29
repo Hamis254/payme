@@ -2,7 +2,17 @@ import aj from '#config/arcjet.js';
 import logger from '#config/logger.js';
 import { slidingWindow } from '@arcjet/node';
 
+const WEBHOOK_PATHS = new Set([
+  '/api/wallet/callback/token-purchase',
+  '/api/my-wallet/callback',
+  '/api/sales/mpesa/callback',
+]);
+
 const securityMiddleware = async (req, res, next) => {
+  if (req.method === 'POST' && WEBHOOK_PATHS.has(req.path)) {
+    return next();
+  }
+
   try {
     const role = req.user?.role || 'guest';
 

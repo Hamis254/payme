@@ -235,7 +235,7 @@ export const processPayMe = async (req, res, next) => {
           paymentConfig,
           phone: customer_phone,
           amount: cart.total_amount,
-          description: `PAYME payment ${attempt.id}`,
+          description: `PM-${attempt.id}`,
         });
 
         const checkoutRequestId = mpesaResp.CheckoutRequestID || null;

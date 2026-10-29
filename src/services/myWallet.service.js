@@ -93,8 +93,6 @@ export const initiateTokenPurchase = async (
     const tokens = packageInfo?.tokens ?? kesToTokens(amount);
     const purchasePackageType = packageType ?? 'custom';
 
-    // Token purchases always use the platform wallet till number (3485049)
-
     const [purchase] = await db
       .insert(tokenPurchases)
       .values({
